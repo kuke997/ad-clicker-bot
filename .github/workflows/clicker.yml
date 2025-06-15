@@ -1,0 +1,30 @@
+name: Auto Ad Clicker
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 * * * *"
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: 3.x
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y chromium-chromedriver
+          pip install -r requirements.txt
+      - name: Run clicker
+        run: python ad_clicker.py
+      - name: Commit logs
+        run: |
+          git config user.name "ad-bot"
+          git config user.email "bot@example.com"
+          git add logs/click_logs.json
+          git commit -m "自动记录点击日志 $(date -u +'%Y-%m-%dT%H:%M:%SZ')" || echo "No changes"
+          git push
