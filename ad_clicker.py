@@ -9,7 +9,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException
 
-TARGET_URLS = ["https://example.com"]
+TARGET_URLS = ["https://cloakaccess.com"]
 
 def get_proxy():
     try:
