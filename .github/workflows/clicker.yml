@@ -27,7 +27,8 @@ jobs:
       - name: Install dependencies
         working-directory: ad-clicker-bot
         run: |
-          pip install playwright requests
+          pip install -r requirements.txt
+          pip install playwright
           playwright install chromium
 
       - name: Run ad clicker script
