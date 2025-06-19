@@ -1,10 +1,17 @@
 [
   {
-    "url": "https://example-site-with-ads.com",
-    "selector": ".ad-container"
+    "url": "https://cloakaccess.com",
+    "selector": "div[id^='fpyf8-ad-']",  // 使用ID前缀选择器
+    "timeout": 10000  // 等待10秒确保广告加载
   },
   {
-    "url": "https://another-ad-site.com",
-    "selector": "#banner-ad"
+    "url": "https://cloakaccess.com",
+    "selector": "div.fpyf8-ad",  // 备用类选择器
+    "timeout": 10000
+  },
+  {
+    "url": "https://cloakaccess.com",
+    "selector": "div[data-zone='152190']",  // 直接使用data-zone属性
+    "timeout": 10000
   }
 ]
