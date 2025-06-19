@@ -15,15 +15,15 @@ class BehaviorSimulator:
         await self.move_mouse()
         
         # 随机等待时间
-        await asyncio.sleep(random.uniform(0.5, 2.0))
+        await asyncio.sleep(random.uniform(0.5, 1.5))
     
     async def random_scroll(self):
         """轻量级滚动模拟"""
-        scroll_times = random.randint(1, 2)
-        for _ in range(scroll_times):
-            scroll_y = random.randint(200, 500)
+        scroll_times = random.randint(0, 1)  # 50%概率滚动
+        if scroll_times:
+            scroll_y = random.randint(200, 400)
             await self.page.mouse.wheel(0, scroll_y)
-            await asyncio.sleep(random.uniform(0.3, 0.8))
+            await asyncio.sleep(random.uniform(0.3, 0.6))
     
     async def move_mouse(self):
         """简化鼠标移动"""
@@ -31,14 +31,9 @@ class BehaviorSimulator:
             return [window.innerWidth, window.innerHeight];
         }""")
         
-        start_x = random.randint(0, width)
-        start_y = random.randint(0, height)
-        
-        await self.page.mouse.move(start_x, start_y)
-        
-        # 创建1-2个移动点
-        for _ in range(random.randint(1, 2)):
+        # 创建1个移动点
+        if width and height:
             end_x = random.randint(0, width)
             end_y = random.randint(0, height)
-            await self.page.mouse.move(end_x, end_y, steps=10)
-            await asyncio.sleep(random.uniform(0.05, 0.2))
+            await self.page.mouse.move(end_x, end_y, steps=5)
+            await asyncio.sleep(random.uniform(0.05, 0.1))
