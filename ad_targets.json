@@ -1,0 +1,17 @@
+[
+  {
+    "url": "https://cloakaccess.com",
+    "selector": ".adsbygoogle",
+    "weight": 5
+  },
+  {
+    "url": "https://example-news-site.com",
+    "selector": "#ad-banner",
+    "weight": 3
+  },
+  {
+    "url": "https://tech-blog.com",
+    "selector": "div.ad-wrapper > a",
+    "weight": 2
+  }
+]
