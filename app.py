@@ -49,19 +49,22 @@ async def self_keep_alive():
     return False
 
 async def click_ads(playwright, url, selector, proxy=None):
-    global last_successful_click
-    
-    browser = None
     try:
-        # 简化浏览器启动
+        # 使用环境变量中的浏览器路径
+        browser_path = os.environ.get("PLAYWRIGHT_BROWSERS_PATH", "./ms-playwright")
+        
         browser = await playwright.chromium.launch(
+            executable_path=os.path.join(browser_path, "chromium", "chrome-linux", "chrome"),
             proxy={"server": f"http://{proxy}"} if proxy else None,
             headless=True,
             args=[
                 "--disable-blink-features=AutomationControlled",
+                "--disable-infobars",
+                "--no-sandbox",
                 f"--user-agent={get_random_user_agent()}"
             ]
         )
+        # ... 其余代码保持不变 ...
         
         context = await browser.new_context(
             viewport={'width': 1280, 'height': 720}
