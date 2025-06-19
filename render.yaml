@@ -1,11 +1,7 @@
 services:
   - type: web
-    name: ad-clicker
+    name: ad-clicker-bot
     env: python
     plan: free
-    buildCommand: |
-      pip install -r requirements.txt
-      playwright install
-    startCommand: python3 main.py
-    autoDeploy: true
-
+    buildCommand: pip install -r requirements.txt
+    startCommand: playwright install && python3 main.py
