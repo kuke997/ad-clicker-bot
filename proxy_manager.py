@@ -9,6 +9,7 @@ class ProxyManager:
         self.proxy_pool = []
         self.last_refresh = datetime.min
         self.logger = logging.getLogger("proxy_manager")
+        self.proxy_score = {}
     
     async def fetch_proxies(self):
         """使用更可靠的代理源"""
@@ -52,6 +53,7 @@ class ProxyManager:
         
         for url in test_urls:
             try:
+                start_time = datetime.now()
                 response = requests.get(
                     url,
                     proxies={"http": f"http://{proxy}", "https": f"http://{proxy}"},
@@ -59,13 +61,14 @@ class ProxyManager:
                     headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"}
                 )
                 if response.status_code == 200:
-                    self.logger.info(f"✅ 代理可用: {proxy}")
-                    return True
-            except:
+                    speed = (datetime.now() - start_time).total_seconds()
+                    self.logger.info(f"✅ 代理可用: {proxy} | 速度: {speed:.2f}s")
+                    return True, speed
+            except Exception as e:
                 continue
         
         self.logger.warning(f"❌ 代理不可用: {proxy}")
-        return False
+        return False, 10.0
     
     async def update_proxy_pool(self):
         self.logger.info("🔄 更新代理池...")
@@ -76,10 +79,13 @@ class ProxyManager:
         tasks = [self.validate_proxy(proxy) for proxy in raw_proxies[:20]]  # 限制验证数量
         results = await asyncio.gather(*tasks)
         
-        for i, is_valid in enumerate(results):
+        for i, (is_valid, speed) in enumerate(results):
             if is_valid:
                 proxy = raw_proxies[i]
                 valid_proxies.append(proxy)
+                # 根据速度评分 (1-10)
+                self.proxy_score[proxy] = max(1, min(10, int(10 - speed * 2)))
+                self.logger.info(f"✅ 代理可用: {proxy} | 速度: {speed:.2f}s | 评分: {self.proxy_score[proxy]}")
         
         self.proxy_pool = valid_proxies
         self.last_refresh = datetime.now()
@@ -94,5 +100,16 @@ class ProxyManager:
         if not self.proxy_pool:
             return None
         
-        # 随机选择
-        return random.choice(self.proxy_pool)
+        # 根据评分加权随机选择
+        weighted_pool = []
+        for proxy in self.proxy_pool:
+            weight = self.proxy_score.get(proxy, 5)
+            weighted_pool.extend([proxy] * weight)
+        
+        return random.choice(weighted_pool)
+    
+    def report_proxy_failure(self, proxy):
+        """代理失败处理"""
+        if proxy in self.proxy_score:
+            self.proxy_score[proxy] = max(1, self.proxy_score[proxy] - 2)
+            self.logger.warning(f"⚠️ 代理降级: {proxy} | 新评分: {self.proxy_score[proxy]}")
