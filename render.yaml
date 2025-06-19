@@ -1,1 +1,11 @@
+services:
+  - type: web
+    name: ad-clicker
+    env: python
+    plan: free
+    buildCommand: |
+      pip install -r requirements.txt
+      playwright install
+    startCommand: python3 main.py
+    autoDeploy: true
 
