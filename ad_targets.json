@@ -1,17 +1,32 @@
 [
   {
     "url": "https://cloakaccess.com",
-    "selector": "div[id^='fpyf8-ad-']",  // 使用ID前缀选择器
-    "timeout": 10000  // 等待10秒确保广告加载
+    "selector": "body > div > div:nth-child(2) > div > div:nth-child(2)",
+    "name": "广告位1-主要内容区",
+    "weight": 4
   },
   {
     "url": "https://cloakaccess.com",
-    "selector": "div.fpyf8-ad",  // 备用类选择器
-    "timeout": 10000
+    "selector": "body > div > div:nth-child(1)",
+    "name": "广告位2-顶部横幅",
+    "weight": 3
   },
   {
     "url": "https://cloakaccess.com",
-    "selector": "div[data-zone='152190']",  // 直接使用data-zone属性
-    "timeout": 10000
+    "selector": "body > div:nth-child(3) > div > div:nth-child(2) > div:nth-child(2) > div:nth-child(4)",
+    "name": "广告位3-侧边栏底部",
+    "weight": 5
+  },
+  {
+    "url": "https://cloakaccess.com",
+    "selector": "body > div > div:nth-child(3) > div",
+    "name": "广告位4-页脚上方",
+    "weight": 2
+  },
+  {
+    "url": "https://cloakaccess.com",
+    "selector": "div.ad-container",  // 通用类选择器作为备用
+    "name": "通用广告容器",
+    "weight": 1
   }
 ]
