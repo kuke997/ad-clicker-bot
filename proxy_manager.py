@@ -93,15 +93,24 @@ class ProxyManager:
         self.logger.info(f"代理池更新完成. 可用代理: {len(self.proxy_pool)}")
     
     async def keep_proxy_pool_updated(self):
-        """定期更新代理池的后台任务"""
+        """定期更新代理池的后台任务，避免高峰时段更新"""
         while True:
             try:
-                # 每10分钟更新一次
-                await asyncio.sleep(600)
-                await self.update_proxy_pool()
+                # 每15分钟更新一次
+                await asyncio.sleep(900)  # 15分钟
+                
+                # 获取当前时间
+                current_hour = datetime.now().hour
+                
+                # 只在低峰时段更新代理（凌晨2-6点）
+                if 2 <= current_hour <= 6:
+                    self.logger.info("🌙 低峰时段更新代理池...")
+                    await self.update_proxy_pool()
+                else:
+                    self.logger.info("⏳ 跳过高峰时段代理更新")
             except Exception as e:
                 self.logger.error(f"代理池更新失败: {str(e)}")
-                await asyncio.sleep(60)  # 出错后等待1分钟重试
+                await asyncio.sleep(300)  # 出错后等待5分钟重试
     
     async def get_best_proxy(self):
         """获取最佳代理，自动刷新池"""
