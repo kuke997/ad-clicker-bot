@@ -32,6 +32,7 @@ last_successful_click = datetime.now()
 is_running = False
 task = None
 proxy_manager = None
+semaphore = asyncio.Semaphore(1)  # 限制同时只有一个浏览器实例运行
 
 # 创建 FastAPI 应用
 app = FastAPI()
@@ -85,9 +86,22 @@ async def click_ads(playwright, url, selector, target, proxy=None):
         if proxy:
             launch_options["proxy"] = {"server": f"http://{proxy}"}
         
-        # 启动浏览器 (使用默认路径)
+        # 启动浏览器 (使用默认路径) - 添加超时处理
         logger.info("🚀 启动Chromium浏览器...")
-        browser = await playwright.chromium.launch(**launch_options)
+        try:
+            # 添加浏览器诊断信息
+            logger.info(f"Playwright版本: {playwright.version}")
+            browser_type = playwright.chromium
+            logger.info(f"Chromium路径: {browser_type.executable_path}")
+            
+            # 60秒超时启动浏览器
+            browser = await asyncio.wait_for(
+                playwright.chromium.launch(**launch_options),
+                timeout=60
+            )
+        except asyncio.TimeoutError:
+            logger.error("❌ 浏览器启动超时")
+            return False
         
         # 创建浏览器上下文
         context = await browser.new_context(
@@ -202,7 +216,7 @@ def should_skip_target(target):
 
 async def clicker_task():
     """广告点击后台任务，支持时间敏感功能"""
-    global last_successful_click, is_running, proxy_manager
+    global last_successful_click, is_running, proxy_manager, semaphore
     
     is_running = True
     logger.info("🚀 广告点击任务启动")
@@ -265,7 +279,11 @@ async def clicker_task():
                 success = False
                 for attempt in range(MAX_RETRIES):
                     logger.info(f"🔁 尝试 #{attempt+1} | 目标: {target['url']} | 广告位: {target.get('name', '未知')} | 代理: {proxy if proxy else '无'}")
-                    success = await click_ads(playwright, target["url"], target["selector"], target, proxy)
+                    
+                    # 使用信号量控制并发
+                    async with semaphore:
+                        success = await click_ads(playwright, target["url"], target["selector"], target, proxy)
+                    
                     if success:
                         clicks_this_minute += 1
                         break
