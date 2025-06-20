@@ -65,25 +65,17 @@ async def click_ads(playwright, url, selector, target, proxy=None):
     
     browser = None
     try:
-        # 使用环境变量中的浏览器路径
-        browser_path = os.environ.get("PLAYWRIGHT_BROWSERS_PATH", "/ms-playwright")
-        chrome_path = os.path.join(browser_path, "chrome-linux", "chrome")
-        
         logger.info(f"🌐 访问目标: {url} | 选择器: {selector} | 广告位: {target.get('name', '未知')}")
-        
-        # 验证浏览器文件是否存在
-        if not os.path.exists(chrome_path):
-            logger.error(f"❌ 浏览器文件不存在: {chrome_path}")
-            return False
         
         # 配置浏览器选项
         launch_options = {
-            "executable_path": chrome_path,
             "headless": True,
             "args": [
                 "--disable-blink-features=AutomationControlled",
                 "--disable-infobars",
                 "--no-sandbox",
+                "--disable-dev-shm-usage",  # 解决Docker内存问题
+                "--single-process",         # 减少资源占用
                 f"--user-agent={get_random_user_agent()}"
             ]
         }
@@ -92,26 +84,34 @@ async def click_ads(playwright, url, selector, target, proxy=None):
         if proxy:
             launch_options["proxy"] = {"server": f"http://{proxy}"}
         
-        # 启动浏览器
+        # 启动浏览器 (使用默认路径)
+        logger.info("🚀 启动Chromium浏览器...")
         browser = await playwright.chromium.launch(**launch_options)
+        
+        # 创建浏览器上下文
         context = await browser.new_context(
             viewport={'width': 1280, 'height': 720},
-            locale='en-US'
+            locale='en-US',
+            # 禁用WebDriver检测
+            bypass_csp=True
         )
-        page = await context.new_page()
         
-        # 基本反检测
-        await page.add_init_script("""
+        # 反检测措施
+        await context.add_init_script("""
             delete navigator.__proto__.webdriver;
+            Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+            window.chrome = { runtime: {} };
         """)
         
+        page = await context.new_page()
+        
         # 访问目标页面
-        logger.info(f"🚀 导航到: {url}")
-        await page.goto(url, timeout=45000, wait_until="domcontentloaded")
+        logger.info(f"🧭 导航到: {url}")
+        await page.goto(url, timeout=60000, wait_until="domcontentloaded")
         logger.info(f"✅ 页面加载成功")
         
         # 等待页面加载
-        await asyncio.sleep(random.uniform(1, 2))
+        await asyncio.sleep(random.uniform(1, 3))
         
         # 模拟人类行为
         logger.info("🧠 模拟人类行为...")
@@ -163,6 +163,9 @@ async def click_ads(playwright, url, selector, target, proxy=None):
         return True
     except Exception as e:
         logger.error(f"❌ 点击失败: {str(e)}")
+        # 添加详细错误日志
+        import traceback
+        logger.debug(f"错误详情: {traceback.format_exc()}")
         return False
     finally:
         if browser:
@@ -214,8 +217,12 @@ async def clicker_task():
         try:
             with open("ad_targets.json", "r") as f:
                 targets = json.load(f)
+            logger.info(f"✅ 成功加载 {len(targets)} 个广告目标")
         except Exception as e:
             logger.error(f"加载广告目标失败: {str(e)}")
+            # 添加详细错误信息
+            import traceback
+            logger.error(traceback.format_exc())
             targets = [{"url": "https://www.wikipedia.org", "selector": "a"}]  # 默认目标
         
         while is_running:
