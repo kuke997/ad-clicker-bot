@@ -3,7 +3,7 @@ import asyncio
 import json
 import random
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from proxy_manager import ProxyManager
 from behavior_simulator import BehaviorSimulator
 from playwright.async_api import async_playwright
@@ -48,6 +48,22 @@ def get_random_user_agent():
     ]
     return random.choice(user_agents)
 
+def check_browser_availability():
+    """检查浏览器是否可用"""
+    try:
+        # 检查系统Chrome
+        if os.path.exists("/usr/bin/google-chrome"):
+            return "system-chrome"
+        
+        # 检查Playwright内置浏览器
+        playwright_dir = os.path.expanduser("~/.cache/ms-playwright")
+        if os.path.exists(os.path.join(playwright_dir, "chromium-1091/chrome-linux/chrome")):
+            return "playwright-chrome"
+        
+        return "no-browser"
+    except Exception:
+        return "error"
+
 async def self_keep_alive():
     """自保活机制 - 当检测到长时间无成功点击时重启任务"""
     global last_successful_click
@@ -69,46 +85,47 @@ async def click_ads(playwright, url, selector, target, proxy=None):
     try:
         logger.info(f"🌐 访问目标: {url} | 选择器: {selector} | 广告位: {target.get('name', '未知')}")
         
-        # 配置浏览器选项
-        launch_options = {
-            "headless": True,
-            "args": [
-                "--disable-blink-features=AutomationControlled",
-                "--disable-infobars",
-                "--no-sandbox",
-                "--disable-dev-shm-usage",  # 解决Docker内存问题
-                "--single-process",         # 减少资源占用
-                "--disable-gpu",
-                "--disable-software-rasterizer",
-                f"--user-agent={get_random_user_agent()}"
-            ]
-        }
-        
-        # 如果提供了代理，添加到启动选项
-        if proxy:
-            launch_options["proxy"] = {"server": f"http://{proxy}"}
-        
-        # 启动浏览器 (使用默认路径) - 添加超时处理
-        logger.info("🚀 启动Chromium浏览器...")
+        # 启动浏览器 - 使用系统安装的Chrome
+        logger.info("🚀 启动浏览器...")
+        browser_type = "system-chrome"
         try:
-            # 安全地获取版本信息
-            try:
-                version = playwright._impl._api_types.APIType.__version__
-                logger.info(f"Playwright版本: {version}")
-            except AttributeError:
-                logger.info("无法获取Playwright版本信息")
-            
-            browser_type = playwright.chromium
-            logger.info(f"Chromium路径: {browser_type.executable_path}")
-            
-            # 60秒超时启动浏览器
-            browser = await asyncio.wait_for(
-                playwright.chromium.launch(**launch_options),
-                timeout=60
+            # 使用系统安装的Chrome
+            browser = await playwright.chromium.launch(
+                executable_path="/usr/bin/google-chrome",
+                headless=True,
+                args=[
+                    "--disable-blink-features=AutomationControlled",
+                    "--disable-infobars",
+                    "--no-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--single-process",
+                    "--disable-gpu",
+                    "--disable-software-rasterizer",
+                    f"--user-agent={get_random_user_agent()}"
+                ],
+                timeout=60000  # 60秒超时
             )
-        except asyncio.TimeoutError:
-            logger.error("❌ 浏览器启动超时")
-            return False
+            logger.info("✅ 浏览器启动成功 (系统Chrome)")
+        except Exception as e:
+            logger.error(f"❌ 系统Chrome启动失败: {str(e)}")
+            # 回退到Playwright内置浏览器
+            logger.warning("⚠️ 尝试使用Playwright内置浏览器...")
+            browser = await playwright.chromium.launch(
+                headless=True,
+                args=[
+                    "--disable-blink-features=AutomationControlled",
+                    "--disable-infobars",
+                    "--no-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--single-process",
+                    "--disable-gpu",
+                    "--disable-software-rasterizer",
+                    f"--user-agent={get_random_user_agent()}"
+                ],
+                timeout=60000
+            )
+            browser_type = "playwright-chrome"
+            logger.info("✅ 浏览器启动成功 (Playwright内置)")
         
         # 创建浏览器上下文
         context = await browser.new_context(
@@ -228,6 +245,14 @@ async def clicker_task():
     is_running = True
     logger.info("🚀 广告点击任务启动")
     logger.info(f"每分钟目标点击次数: {CLICKS_PER_MINUTE}")
+    
+    # 检查浏览器可用性
+    browser_status = check_browser_availability()
+    logger.info(f"🔍 浏览器状态: {browser_status}")
+    
+    if browser_status == "no-browser":
+        logger.error("❌ 没有可用的浏览器，请检查安装")
+        return
     
     # 初始化代理管理器
     proxy_manager = ProxyManager()
@@ -367,6 +392,15 @@ async def health_check():
         "uptime": (datetime.now() - last_successful_click).total_seconds()
     }
 
+@app.get("/browser-status")
+async def browser_status():
+    """浏览器健康检查端点"""
+    status = check_browser_availability()
+    return {
+        "status": "healthy" if status != "no-browser" else "unhealthy",
+        "browser_type": status
+    }
+
 @app.get("/report")
 async def time_report():
     """广告活跃状态报告端点"""
@@ -396,7 +430,7 @@ async def time_report():
                 active_counts[name]["reason"] = f"激活时段: {config['start']}:00-{config['end']}:00"
             elif "weekdays" in config and "hours" in config:
                 weekdays = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
-                active_weekdays = [weekdays[i-1] for i in config["weekdays"]]
+                active_weekdays = [weekdays[i] for i in config["weekdays"]]
                 active_counts[name]["reason"] = f"激活时间: {', '.join(active_weekdays)} {', '.join(map(str, config['hours']))}点"
     
     return active_counts
