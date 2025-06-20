@@ -78,6 +78,8 @@ async def click_ads(playwright, url, selector, target, proxy=None):
                 "--no-sandbox",
                 "--disable-dev-shm-usage",  # 解决Docker内存问题
                 "--single-process",         # 减少资源占用
+                "--disable-gpu",
+                "--disable-software-rasterizer",
                 f"--user-agent={get_random_user_agent()}"
             ]
         }
@@ -89,8 +91,13 @@ async def click_ads(playwright, url, selector, target, proxy=None):
         # 启动浏览器 (使用默认路径) - 添加超时处理
         logger.info("🚀 启动Chromium浏览器...")
         try:
-            # 添加浏览器诊断信息
-            logger.info(f"Playwright版本: {playwright.version}")
+            # 安全地获取版本信息
+            try:
+                version = playwright._impl._api_types.APIType.__version__
+                logger.info(f"Playwright版本: {version}")
+            except AttributeError:
+                logger.info("无法获取Playwright版本信息")
+            
             browser_type = playwright.chromium
             logger.info(f"Chromium路径: {browser_type.executable_path}")
             
@@ -237,6 +244,13 @@ async def clicker_task():
             with open("ad_targets.json", "r") as f:
                 targets = json.load(f)
             logger.info(f"✅ 成功加载 {len(targets)} 个广告目标")
+            
+            # 处理通配符URL
+            for target in targets:
+                if '*' in target["url"]:
+                    # 替换通配符为实际路径
+                    target["url"] = target["url"].replace('*', random.choice(["post1", "post2", "article"]))
+                    logger.info(f"🔄 处理通配符URL: {target['url']}")
         except Exception as e:
             logger.error(f"加载广告目标失败: {str(e)}")
             # 添加详细错误信息
