@@ -45,7 +45,7 @@ class ProxyManager:
         return list(proxies)
     
     async def validate_proxy(self, proxy):
-        """使用更宽松的验证方法"""
+        """使用更可靠的验证方法"""
         test_urls = [
             "http://www.example.com",  # 轻量级页面
             "http://www.google.com/gen_204",
@@ -58,7 +58,7 @@ class ProxyManager:
                 response = requests.get(
                     url,
                     proxies={"http": f"http://{proxy}", "https": f"http://{proxy}"},
-                    timeout=10,  # 增加超时时间
+                    timeout=10,
                     headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"}
                 )
                 if response.status_code in [200, 204]:
@@ -76,8 +76,8 @@ class ProxyManager:
         raw_proxies = await self.fetch_proxies()
         valid_proxies = []
         
-        # 并行验证代理 (限制为100个)
-        tasks = [self.validate_proxy(proxy) for proxy in raw_proxies[:100]]
+        # 并行验证代理 (限制为50个)
+        tasks = [self.validate_proxy(proxy) for proxy in raw_proxies[:50]]
         results = await asyncio.gather(*tasks)
         
         for i, (is_valid, speed) in enumerate(results):
@@ -92,15 +92,28 @@ class ProxyManager:
         self.last_refresh = datetime.now()
         self.logger.info(f"代理池更新完成. 可用代理: {len(self.proxy_pool)}")
     
+    async def keep_proxy_pool_updated(self):
+        """定期更新代理池的后台任务"""
+        while True:
+            try:
+                # 每10分钟更新一次
+                await asyncio.sleep(600)
+                await self.update_proxy_pool()
+            except Exception as e:
+                self.logger.error(f"代理池更新失败: {str(e)}")
+                await asyncio.sleep(60)  # 出错后等待1分钟重试
+    
     async def get_best_proxy(self):
         """获取最佳代理，自动刷新池"""
-        # 每15分钟刷新一次代理池
+        # 如果超过15分钟没有更新或代理池为空，则更新代理池
         if (datetime.now() - self.last_refresh) > timedelta(minutes=15) or not self.proxy_pool:
-            await self.update_proxy_pool()
+            try:
+                # 快速更新代理池（30秒超时）
+                await asyncio.wait_for(self.update_proxy_pool(), timeout=30)
+            except asyncio.TimeoutError:
+                self.logger.warning("代理更新超时，使用现有代理或直连")
         
         if not self.proxy_pool:
-            # 添加回退机制：当没有代理时尝试直接连接
-            logger.warning("⚠️ 没有可用代理，尝试直接连接...")
             return None
         
         # 根据评分加权随机选择
