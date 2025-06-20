@@ -12,9 +12,9 @@ class ProxyManager:
         self.proxy_score = {}
     
     async def fetch_proxies(self):
-        """使用更可靠的代理源"""
+        """使用可靠的代理源"""
         sources = [
-            "https://proxylist.geonode.com/api/proxy-list?protocols=http&limit=100&country=US,GB,CA,DE",
+            "https://proxylist.geonode.com/api/proxy-list?protocols=http&limit=50&country=US,GB,CA,DE",
             "https://api.proxyscrape.com/v2/?request=getproxies&protocol=http&timeout=5000&country=all",
             "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt"
         ]
@@ -23,7 +23,7 @@ class ProxyManager:
         for url in sources:
             try:
                 self.logger.info(f"获取代理源: {url}")
-                response = requests.get(url, timeout=15)
+                response = requests.get(url, timeout=10)
                 
                 if "geonode" in url:
                     # 处理 GeoNode 的 JSON 格式
@@ -51,7 +51,7 @@ class ProxyManager:
             response = requests.get(
                 test_url,
                 proxies={"http": f"http://{proxy}", "https": f"http://{proxy}"},
-                timeout=5,  # 缩短超时时间
+                timeout=3,  # 缩短超时时间
                 headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"}
             )
             if response.status_code == 200:
@@ -69,8 +69,8 @@ class ProxyManager:
         raw_proxies = await self.fetch_proxies()
         valid_proxies = []
         
-        # 并行验证代理 (限制为30个)
-        tasks = [self.validate_proxy(proxy) for proxy in raw_proxies[:30]]
+        # 并行验证代理 (限制为20个)
+        tasks = [self.validate_proxy(proxy) for proxy in raw_proxies[:20]]
         results = await asyncio.gather(*tasks)
         
         for i, (is_valid, speed) in enumerate(results):
@@ -110,9 +110,9 @@ class ProxyManager:
         # 如果超过15分钟没有更新或代理池为空，则更新代理池
         if (datetime.now() - self.last_refresh) > timedelta(minutes=15) or not self.proxy_pool:
             try:
-                # 快速更新代理池（20秒超时）
+                # 快速更新代理池（15秒超时）
                 self.logger.info("⚡ 快速更新代理池...")
-                await asyncio.wait_for(self.update_proxy_pool(), timeout=20)
+                await asyncio.wait_for(self.update_proxy_pool(), timeout=15)
             except asyncio.TimeoutError:
                 self.logger.warning("代理更新超时，使用现有代理或直连")
         
