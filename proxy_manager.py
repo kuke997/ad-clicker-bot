@@ -14,18 +14,16 @@ class ProxyManager:
     async def fetch_proxies(self):
         """使用更可靠的代理源"""
         sources = [
-            "https://proxylist.geonode.com/api/proxy-list?protocols=http&limit=200&country=US,GB,CA,DE",
-            "https://api.proxyscrape.com/v2/?request=getproxies&protocol=http&timeout=10000&country=all",
-            "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt",
-            "https://raw.githubusercontent.com/clarketm/proxy-list/master/proxy-list-raw.txt",
-            "https://raw.githubusercontent.com/ShiftyTR/Proxy-List/master/http.txt"
+            "https://proxylist.geonode.com/api/proxy-list?protocols=http&limit=100&country=US,GB,CA,DE",
+            "https://api.proxyscrape.com/v2/?request=getproxies&protocol=http&timeout=5000&country=all",
+            "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt"
         ]
         
         proxies = set()
         for url in sources:
             try:
                 self.logger.info(f"获取代理源: {url}")
-                response = requests.get(url, timeout=20)
+                response = requests.get(url, timeout=15)
                 
                 if "geonode" in url:
                     # 处理 GeoNode 的 JSON 格式
@@ -45,28 +43,23 @@ class ProxyManager:
         return list(proxies)
     
     async def validate_proxy(self, proxy):
-        """使用更可靠的验证方法"""
-        test_urls = [
-            "http://www.example.com",  # 轻量级页面
-            "http://www.google.com/gen_204",
-            "http://www.cloudflare.com/cdn-cgi/trace"
-        ]
+        """使用轻量级验证方法"""
+        test_url = "http://www.example.com"  # 轻量级验证URL
         
-        for url in test_urls:
-            try:
-                start_time = datetime.now()
-                response = requests.get(
-                    url,
-                    proxies={"http": f"http://{proxy}", "https": f"http://{proxy}"},
-                    timeout=10,
-                    headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"}
-                )
-                if response.status_code in [200, 204]:
-                    speed = (datetime.now() - start_time).total_seconds()
-                    self.logger.info(f"✅ 代理可用: {proxy} | 速度: {speed:.2f}s")
-                    return True, speed
-            except Exception as e:
-                continue
+        try:
+            start_time = datetime.now()
+            response = requests.get(
+                test_url,
+                proxies={"http": f"http://{proxy}", "https": f"http://{proxy}"},
+                timeout=5,  # 缩短超时时间
+                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"}
+            )
+            if response.status_code == 200:
+                speed = (datetime.now() - start_time).total_seconds()
+                self.logger.info(f"✅ 代理可用: {proxy} | 速度: {speed:.2f}s")
+                return True, speed
+        except Exception as e:
+            pass
         
         self.logger.warning(f"❌ 代理不可用: {proxy}")
         return False, 10.0
@@ -76,8 +69,8 @@ class ProxyManager:
         raw_proxies = await self.fetch_proxies()
         valid_proxies = []
         
-        # 并行验证代理 (限制为50个)
-        tasks = [self.validate_proxy(proxy) for proxy in raw_proxies[:50]]
+        # 并行验证代理 (限制为30个)
+        tasks = [self.validate_proxy(proxy) for proxy in raw_proxies[:30]]
         results = await asyncio.gather(*tasks)
         
         for i, (is_valid, speed) in enumerate(results):
@@ -117,12 +110,14 @@ class ProxyManager:
         # 如果超过15分钟没有更新或代理池为空，则更新代理池
         if (datetime.now() - self.last_refresh) > timedelta(minutes=15) or not self.proxy_pool:
             try:
-                # 快速更新代理池（30秒超时）
-                await asyncio.wait_for(self.update_proxy_pool(), timeout=30)
+                # 快速更新代理池（20秒超时）
+                self.logger.info("⚡ 快速更新代理池...")
+                await asyncio.wait_for(self.update_proxy_pool(), timeout=20)
             except asyncio.TimeoutError:
                 self.logger.warning("代理更新超时，使用现有代理或直连")
         
         if not self.proxy_pool:
+            self.logger.warning("⚠️ 没有可用代理，尝试直接连接")
             return None
         
         # 根据评分加权随机选择
@@ -138,3 +133,9 @@ class ProxyManager:
         if proxy in self.proxy_score:
             self.proxy_score[proxy] = max(1, self.proxy_score[proxy] - 3)
             self.logger.warning(f"⚠️ 代理降级: {proxy} | 新评分: {self.proxy_score[proxy]}")
+            
+            # 如果评分过低，从代理池中移除
+            if self.proxy_score[proxy] <= 1:
+                self.logger.warning(f"🗑️ 移除低分代理: {proxy}")
+                if proxy in self.proxy_pool:
+                    self.proxy_pool.remove(proxy)
