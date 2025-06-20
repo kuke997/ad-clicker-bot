@@ -5,8 +5,8 @@
     "name": "广告位1-主要内容区",
     "weight": 4,
     "active_hours": {
-      "start": 9,
-      "end": 21
+      "start": 0,
+      "end": 24
     },
     "click_depth": {
       "min": 1,
@@ -18,10 +18,7 @@
     "selector": "body > div > div:nth-child(1)",
     "name": "广告位2-顶部横幅",
     "weight": 3,
-    "active_hours": {
-      "weekdays": [1, 2, 3, 4, 5],
-      "hours": [12, 13, 18, 19]
-    },
+    "active_hours": "always",
     "click_depth": 1
   },
   {
@@ -41,6 +38,7 @@
     "selector": "div.product-ad",
     "name": "产品页广告",
     "weight": 2,
+    "active_hours": "always",
     "click_depth": 1
   },
   {
@@ -48,10 +46,7 @@
     "selector": "div.blog-ad",
     "name": "博客页广告",
     "weight": 2,
-    "active_hours": {
-      "start": 8,
-      "end": 22
-    },
+    "active_hours": "always",
     "click_depth": {
       "min": 1,
       "max": 2
