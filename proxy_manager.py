@@ -14,17 +14,18 @@ class ProxyManager:
     async def fetch_proxies(self):
         """使用更可靠的代理源"""
         sources = [
-            "https://proxylist.geonode.com/api/proxy-list?protocols=http&limit=50&country=US",
-            "https://api.proxyscrape.com/v2/?request=getproxies&protocol=http&timeout=5000&country=US",
-            "https://raw.githubusercontent.com/jetkai/proxy-list/main/online-proxies/txt/proxies-http.txt",
-            "https://raw.githubusercontent.com/roosterkid/openproxylist/main/http_RAW.txt"
+            "https://proxylist.geonode.com/api/proxy-list?protocols=http&limit=200&country=US,GB,CA,DE",
+            "https://api.proxyscrape.com/v2/?request=getproxies&protocol=http&timeout=10000&country=all",
+            "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt",
+            "https://raw.githubusercontent.com/clarketm/proxy-list/master/proxy-list-raw.txt",
+            "https://raw.githubusercontent.com/ShiftyTR/Proxy-List/master/http.txt"
         ]
         
         proxies = set()
         for url in sources:
             try:
                 self.logger.info(f"获取代理源: {url}")
-                response = requests.get(url, timeout=10)
+                response = requests.get(url, timeout=20)
                 
                 if "geonode" in url:
                     # 处理 GeoNode 的 JSON 格式
@@ -44,11 +45,11 @@ class ProxyManager:
         return list(proxies)
     
     async def validate_proxy(self, proxy):
-        """使用更可靠的验证方法"""
+        """使用更宽松的验证方法"""
         test_urls = [
-            "http://www.google.com",
-            "http://www.amazon.com",
-            "http://www.microsoft.com"
+            "http://www.example.com",  # 轻量级页面
+            "http://www.google.com/gen_204",
+            "http://www.cloudflare.com/cdn-cgi/trace"
         ]
         
         for url in test_urls:
@@ -57,10 +58,10 @@ class ProxyManager:
                 response = requests.get(
                     url,
                     proxies={"http": f"http://{proxy}", "https": f"http://{proxy}"},
-                    timeout=8,
+                    timeout=10,  # 增加超时时间
                     headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"}
                 )
-                if response.status_code == 200:
+                if response.status_code in [200, 204]:
                     speed = (datetime.now() - start_time).total_seconds()
                     self.logger.info(f"✅ 代理可用: {proxy} | 速度: {speed:.2f}s")
                     return True, speed
@@ -75,8 +76,8 @@ class ProxyManager:
         raw_proxies = await self.fetch_proxies()
         valid_proxies = []
         
-        # 并行验证代理
-        tasks = [self.validate_proxy(proxy) for proxy in raw_proxies[:20]]  # 限制验证数量
+        # 并行验证代理 (限制为100个)
+        tasks = [self.validate_proxy(proxy) for proxy in raw_proxies[:100]]
         results = await asyncio.gather(*tasks)
         
         for i, (is_valid, speed) in enumerate(results):
@@ -93,11 +94,13 @@ class ProxyManager:
     
     async def get_best_proxy(self):
         """获取最佳代理，自动刷新池"""
-        # 每30分钟刷新一次代理池
-        if (datetime.now() - self.last_refresh) > timedelta(minutes=30) or not self.proxy_pool:
+        # 每15分钟刷新一次代理池
+        if (datetime.now() - self.last_refresh) > timedelta(minutes=15) or not self.proxy_pool:
             await self.update_proxy_pool()
         
         if not self.proxy_pool:
+            # 添加回退机制：当没有代理时尝试直接连接
+            logger.warning("⚠️ 没有可用代理，尝试直接连接...")
             return None
         
         # 根据评分加权随机选择
@@ -111,5 +114,5 @@ class ProxyManager:
     def report_proxy_failure(self, proxy):
         """代理失败处理"""
         if proxy in self.proxy_score:
-            self.proxy_score[proxy] = max(1, self.proxy_score[proxy] - 2)
+            self.proxy_score[proxy] = max(1, self.proxy_score[proxy] - 3)
             self.logger.warning(f"⚠️ 代理降级: {proxy} | 新评分: {self.proxy_score[proxy]}")
