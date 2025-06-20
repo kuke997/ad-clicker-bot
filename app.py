@@ -31,6 +31,7 @@ logger = logging.getLogger("ad-clicker-bot")
 last_successful_click = datetime.now()
 is_running = False
 task = None
+proxy_manager = None
 
 # 创建 FastAPI 应用
 app = FastAPI()
@@ -201,13 +202,17 @@ def should_skip_target(target):
 
 async def clicker_task():
     """广告点击后台任务，支持时间敏感功能"""
-    global last_successful_click, is_running
+    global last_successful_click, is_running, proxy_manager
     
     is_running = True
     logger.info("🚀 广告点击任务启动")
+    logger.info(f"每分钟目标点击次数: {CLICKS_PER_MINUTE}")
     
     # 初始化代理管理器
     proxy_manager = ProxyManager()
+    
+    # 启动后台代理更新任务
+    asyncio.create_task(proxy_manager.keep_proxy_pool_updated())
     
     async with async_playwright() as playwright:
         # 首次代理池更新
@@ -245,17 +250,17 @@ async def clicker_task():
                     continue
                 
                 target = random.choice(weighted_targets)
+                logger.info(f"🎯 选择广告目标: {target['name']} | URL: {target['url']}")
                 
                 # 获取代理（如果可用）
                 proxy = None
                 try:
                     proxy = await proxy_manager.get_best_proxy()
                     if not proxy:
-                        logger.warning("⚠️ 没有可用代理，等待更新...")
-                        await asyncio.sleep(30)
-                        continue
+                        logger.warning("⚠️ 没有可用代理，尝试直接连接...")
                 except Exception as e:
                     logger.error(f"获取代理失败: {str(e)}")
+                    proxy = None
                 
                 success = False
                 for attempt in range(MAX_RETRIES):
