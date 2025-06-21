@@ -189,8 +189,8 @@ async def click_ads(playwright, url, selector, target, proxy=None):
                     use_direct_connection = True
                     navigation_success = True
                 # 处理连接重置错误
-                elif "ERR_CONNECTION_RESET" in error_str:
-                    logger.warning(f"⚠️ 连接被重置 (尝试 {navigation_attempts}/{max_navigation_attempts})")
+                elif "ERR_CONNECTION_RESET" in error_str or "ERR_EMPTY_RESPONSE" in error_str:
+                    logger.warning(f"⚠️ 网络错误: {error_str} (尝试 {navigation_attempts}/{max_navigation_attempts})")
                     if navigation_attempts < max_navigation_attempts:
                         wait_time = NETWORK_ERROR_RETRY_DELAY * navigation_attempts
                         logger.info(f"⏱️ 等待 {wait_time} 秒后重试...")
@@ -230,13 +230,17 @@ async def click_ads(playwright, url, selector, target, proxy=None):
         # 确定点击次数
         if isinstance(click_depth_config, int):
             click_count = click_depth_config
-        elif "min" in click_depth_config and "max" in click_depth_config:
+        elif isinstance(click_depth_config, dict) and "min" in click_depth_config and "max" in click_depth_config:
             click_count = random.randint(click_depth_config["min"], click_depth_config["max"])
         else:
             click_count = 1
         
         # 确定可点击元素类型
-        allowed_elements = click_depth_config.get("elements", ["a", "button", "div"])
+        if isinstance(click_depth_config, dict):
+            allowed_elements = click_depth_config.get("elements", ["a", "button", "div"])
+        else:
+            allowed_elements = ["a", "button", "div"]
+        
         clickable_selector = f"{selector} {','.join(allowed_elements)}"
         
         logger.info(f"🎯 点击深度: {click_count}次 | 元素选择器: {clickable_selector}")
@@ -267,7 +271,10 @@ async def click_ads(playwright, url, selector, target, proxy=None):
             element = random.choice(elements)
             
             # 高亮元素用于调试
-            await element.evaluate("el => el.style.border = '2px solid red'")
+            try:
+                await element.evaluate("el => el.style.border = '2px solid red'")
+            except Exception as e:
+                logger.warning(f"⚠️ 无法高亮元素: {str(e)}")
             
             # 点击元素
             try:
@@ -299,7 +306,10 @@ async def click_ads(playwright, url, selector, target, proxy=None):
         return False
     finally:
         if browser:
-            await browser.close()
+            try:
+                await browser.close()
+            except Exception as e:
+                logger.warning(f"⚠️ 关闭浏览器时出错: {str(e)}")
 
 def should_skip_target(target):
     """检查广告目标是否应跳过（基于时间敏感配置）"""
@@ -386,9 +396,8 @@ async def clicker_task():
                 try:
                     proxy = await proxy_manager.get_best_proxy()
                     if not proxy:
-                        logger.warning("⚠️ 没有可用代理，等待更新...")
-                        await asyncio.sleep(30)
-                        continue
+                        logger.warning("⚠️ 没有可用代理，尝试直接连接...")
+                        # 这里不设置代理，后续会使用直接连接
                 except Exception as e:
                     logger.error(f"获取代理失败: {str(e)}")
                 
@@ -406,14 +415,18 @@ async def clicker_task():
                         break
                     else:
                         # 指数退避策略
-                        backoff_time = 2 ** attempt
+                        backoff_time = min(30, 2 ** attempt)  # 最大等待30秒
                         logger.info(f"⏱️ 等待 {backoff_time} 秒后重试...")
                         await asyncio.sleep(backoff_time)
                         
                         if proxy:
                             # 报告代理失败并获取新代理
                             proxy_manager.report_proxy_failure(proxy)
-                            proxy = await proxy_manager.get_best_proxy()
+                            try:
+                                proxy = await proxy_manager.get_best_proxy()
+                            except Exception as e:
+                                logger.error(f"获取新代理失败: {str(e)}")
+                                proxy = None
                 
                 # 更新连接统计
                 if success:
