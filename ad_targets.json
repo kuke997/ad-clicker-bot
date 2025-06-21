@@ -4,7 +4,10 @@
     "selector": "body > div > div:nth-child(2) > div > div:nth-child(2)",
     "name": "广告位1-主要内容区",
     "weight": 4,
-    "active_hours": "always",
+    "active_hours": {
+      "start": 0,
+      "end": 24
+    },
     "click_depth": {
       "min": 1,
       "max": 2
