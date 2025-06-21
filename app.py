@@ -100,7 +100,20 @@ async def click_ads(playwright, url, selector, target, proxy=None):
                 "--no-sandbox",
                 "--disable-dev-shm-usage",  # 解决Docker内存问题
                 "--single-process",         # 减少资源占用
-                f"--user-agent={get_random_user_agent()}"
+                f"--user-agent={get_random_user_agent()}",
+                # 添加GPU禁用参数
+                "--disable-gpu",
+                "--disable-software-rasterizer",
+                "--disable-gl-drawing-for-tests",
+                "--disable-breakpad",
+                "--disable-setuid-sandbox",
+                "--no-zygote",
+                "--ignore-gpu-blocklist",
+                "--disable-gpu-early-init",
+                "--disable-gpu-sandbox",
+                "--enable-webgl",
+                "--use-gl=swiftshader",
+                "--use-angle=swiftshader"
             ],
             # 指定Chromium可执行路径
             "executable_path": "/ms-playwright/chromium/chrome-linux/chrome"
