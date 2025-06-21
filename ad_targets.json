@@ -1,55 +1,10 @@
 [
   {
-    "url": "https://cloakaccess.com",
-    "selector": "body > div > div:nth-child(2) > div > div:nth-child(2)",
-    "name": "广告位1-主要内容区",
-    "weight": 4,
-    "active_hours": {
-      "start": 0,
-      "end": 24
-    },
-    "click_depth": {
-      "min": 1,
-      "max": 2
-    }
-  },
-  {
-    "url": "https://cloakaccess.com",
-    "selector": "body > div > div:nth-child(1)",
-    "name": "广告位2-顶部横幅",
-    "weight": 3,
+    "url": "https://www.wikipedia.org",
+    "selector": "a",
+    "name": "测试广告",
+    "weight": 1,
     "active_hours": "always",
     "click_depth": 1
-  },
-  {
-    "url": "https://cloakaccess.com",
-    "selector": "body > div:nth-child(3) > div > div:nth-child(2) > div:nth-child(2) > div:nth-child(4)",
-    "name": "广告位3-侧边栏底部",
-    "weight": 5,
-    "active_hours": "always",
-    "click_depth": {
-      "min": 2,
-      "max": 3,
-      "elements": ["a", "button"]
-    }
-  },
-  {
-    "url": "https://cloakaccess.com/products",
-    "selector": "div.product-ad",
-    "name": "产品页广告",
-    "weight": 2,
-    "active_hours": "always",
-    "click_depth": 1
-  },
-  {
-    "url": "https://cloakaccess.com/blog/*",
-    "selector": "div.blog-ad",
-    "name": "博客页广告",
-    "weight": 2,
-    "active_hours": "always",
-    "click_depth": {
-      "min": 1,
-      "max": 2
-    }
   }
 ]
