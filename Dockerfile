@@ -28,6 +28,18 @@ RUN apt-get update && \
     libharfbuzz0b \
     libpango-1.0-0 \
     libcairo2 \
+    # 修复dbus和X11问题
+    dbus \
+    xvfb \
+    # 修复EGL和GPU问题
+    libegl1 \
+    libgl1-mesa-dri \
+    libgl1-mesa-glx \
+    # 修复XCB问题
+    libxcb1 \
+    libxcb-dri3-0 \
+    # 解决CPU信息缺失问题
+    procps \
     # 清理缓存
     && rm -rf /var/lib/apt/lists/*
 
@@ -58,9 +70,14 @@ COPY . .
 # 设置环境变量
 ENV DISPLAY=:99
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+# 修复dbus问题
+ENV DBUS_SESSION_BUS_ADDRESS=disabled:
+
+# 设置启动脚本可执行
+RUN chmod +x start_xvfb.sh
 
 # 暴露端口
 EXPOSE 10000
 
 # 启动命令
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "10000"]
+CMD ["./start_xvfb.sh"]
