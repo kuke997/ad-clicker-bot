@@ -17,7 +17,7 @@ MAX_RETRIES = 2
 
 # 日志配置
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,  # 改为DEBUG级别获取更多信息
     format='%(asctime)s [%(levelname)s] %(message)s',
     handlers=[
         logging.StreamHandler(),
@@ -56,8 +56,20 @@ async def self_keep_alive():
         time_since_last_success = (datetime.now() - last_successful_click).total_seconds()
         if time_since_last_success > 1800:  # 30分钟无成功点击
             logger.warning("⚠️ 长时间无成功点击，重启任务...")
-            # 通过抛出异常重启（Render会自动重启服务）
-            raise Exception("Self-restart due to inactivity")
+            # 通过取消任务并重新创建来重启
+            global task, is_running
+            is_running = False
+            if task:
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+            is_running = True
+            task = asyncio.create_task(clicker_task())
+            last_successful_click = datetime.now()
+            return True
+        return False
 
 async def click_ads(playwright, url, selector, target, proxy=None):
     """执行广告点击操作，支持时间敏感和点击深度功能"""
@@ -107,11 +119,11 @@ async def click_ads(playwright, url, selector, target, proxy=None):
         
         # 访问目标页面
         logger.info(f"🧭 导航到: {url}")
-        await page.goto(url, timeout=60000, wait_until="domcontentloaded")
+        await page.goto(url, timeout=60000, wait_until="networkidle")
         logger.info(f"✅ 页面加载成功")
         
         # 等待页面加载
-        await asyncio.sleep(random.uniform(1, 3))
+        await asyncio.sleep(random.uniform(2, 4))
         
         # 模拟人类行为
         logger.info("🧠 模拟人类行为...")
@@ -137,11 +149,24 @@ async def click_ads(playwright, url, selector, target, proxy=None):
         
         # 执行多次点击
         for i in range(click_count):
+            # 等待元素可能出现
+            try:
+                await page.wait_for_selector(clickable_selector, timeout=5000, state="attached")
+            except Exception as e:
+                logger.warning(f"⏳ 等待元素超时: {clickable_selector}")
+            
             # 查找所有可点击元素
             elements = await page.query_selector_all(clickable_selector)
             
             if not elements:
                 logger.warning(f"⚠️ 未找到可点击元素: {clickable_selector}")
+                # 尝试截图用于调试
+                try:
+                    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                    await page.screenshot(path=f"screenshot_error_{timestamp}.png")
+                    logger.info(f"📸 已保存错误截图: screenshot_error_{timestamp}.png")
+                except Exception as e:
+                    logger.error(f"截图失败: {str(e)}")
                 break
             
             # 随机选择一个元素点击
@@ -186,13 +211,13 @@ def should_skip_target(target):
         return False
     
     # 时间段配置 (如 "start": 9, "end": 21)
-    if "start" in config and "end" in config:
+    if isinstance(config, dict) and "start" in config and "end" in config:
         if config["start"] <= current_hour < config["end"]:
             return False  # 在活跃时段
         return True  # 在非活跃时段
     
     # 详细配置 (如 "weekdays": [1,2,3,4,5], "hours": [12,13,18,19])
-    if "weekdays" in config and "hours" in config:
+    if isinstance(config, dict) and "weekdays" in config and "hours" in config:
         if current_weekday in config["weekdays"] and current_hour in config["hours"]:
             return False  # 在活跃时段
         return True  # 在非活跃时段
@@ -223,7 +248,7 @@ async def clicker_task():
             # 添加详细错误信息
             import traceback
             logger.error(traceback.format_exc())
-            targets = [{"url": "https://www.wikipedia.org", "selector": "a"}]  # 默认目标
+            targets = [{"url": "https://www.wikipedia.org", "selector": "a", "name": "测试广告", "weight": 1, "active_hours": "always", "click_depth": 1}]
         
         while is_running:
             clicks_this_minute = 0
@@ -355,14 +380,24 @@ async def time_report():
             config = target["active_hours"]
             if config == "always":
                 active_counts[name]["reason"] = "全天激活"
-            elif "start" in config and "end" in config:
+            elif isinstance(config, dict) and "start" in config and "end" in config:
                 active_counts[name]["reason"] = f"激活时段: {config['start']}:00-{config['end']}:00"
-            elif "weekdays" in config and "hours" in config:
+            elif isinstance(config, dict) and "weekdays" in config and "hours" in config:
                 weekdays = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
-                active_weekdays = [weekdays[i-1] for i in config["weekdays"]]
+                active_weekdays = [weekdays[i] for i in config["weekdays"]]
                 active_counts[name]["reason"] = f"激活时间: {', '.join(active_weekdays)} {', '.join(map(str, config['hours']))}点"
     
     return active_counts
+
+@app.get("/resources")
+async def resource_monitor():
+    """资源监控端点"""
+    import psutil
+    return {
+        "memory": psutil.virtual_memory()._asdict(),
+        "cpu": psutil.cpu_percent(),
+        "disk": psutil.disk_usage('/')._asdict()
+    }
 
 if __name__ == "__main__":
     # 本地运行入口
