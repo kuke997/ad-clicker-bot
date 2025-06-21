@@ -42,9 +42,14 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# 安装 Playwright 和 Chromium
-RUN PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 pip install playwright && \
-    npx playwright install chromium --with-deps
+# 安装 Playwright 和 Chromium - 修复路径问题
+RUN PLAYWRIGHT_BROWSERS_PATH=/ms-playwright npx playwright install chromium --with-deps
+
+# 创建符号链接解决路径问题
+RUN cd /ms-playwright && \
+    ln -s chromium-* chromium && \
+    cd chromium && \
+    if [ -d "chrome-linux" ]; then ln -s chrome-linux chrome; fi
 
 # 复制其余项目文件
 COPY . .
