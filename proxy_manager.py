@@ -52,15 +52,20 @@ class ProxyManager:
             for url in test_urls:
                 try:
                     start_time = datetime.now()
+                    # 增加超时时间到15秒
+                    timeout = aiohttp.ClientTimeout(total=15)
                     async with session.get(
                         url,
                         proxy=f"http://{proxy}",
-                        timeout=10,
+                        timeout=timeout,  # 使用自定义超时
                         headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"}
                     ) as response:
                         if response.status in [200, 204]:
                             speed = (datetime.now() - start_time).total_seconds()
                             return True, speed
+                except asyncio.TimeoutError:
+                    self.logger.warning(f"⌛ 代理验证超时: {proxy}")
+                    continue
                 except Exception as e:
                     continue
         
