@@ -24,23 +24,30 @@ RUN apt-get update && \
     libwayland-client0 \
     libgtk-3-0 \
     fonts-noto-color-emoji \
+    # 添加缺失的依赖
+    libharfbuzz0b \
+    libpango-1.0-0 \
+    libcairo2 \
+    # 清理缓存
     && rm -rf /var/lib/apt/lists/*
 
-# 安装最新版 Node.js（Playwright 需要）
+# 安装最新版 Node.js
 RUN wget -qO- https://deb.nodesource.com/setup_20.x | bash - && \
     apt-get install -y nodejs
 
 # 设置工作目录
 WORKDIR /app
 
-# 复制项目文件
-COPY . .
-
-# 安装 Python 依赖
+# 先复制 requirements.txt 并安装 Python 依赖
+COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # 安装 Playwright 和 Chromium
-RUN npx playwright install chromium --with-deps
+RUN PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 pip install playwright && \
+    npx playwright install chromium --with-deps
+
+# 复制其余项目文件
+COPY . .
 
 # 设置环境变量
 ENV DISPLAY=:99
@@ -51,4 +58,3 @@ EXPOSE 10000
 
 # 启动命令
 CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "10000"]
-
