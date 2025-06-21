@@ -14,7 +14,8 @@ from fastapi import FastAPI
 CLICKS_PER_MINUTE = 8
 MIN_INTERVAL = 5  # 秒
 MAX_INTERVAL = 15  # 秒
-MAX_RETRIES = 2
+MAX_RETRIES = 3
+NETWORK_ERROR_RETRY_DELAY = 10  # 网络错误重试延迟（秒）
 
 # 日志配置
 logging.basicConfig(
@@ -144,41 +145,76 @@ async def click_ads(playwright, url, selector, target, proxy=None):
         
         page = await context.new_page()
         
-        # 访问目标页面 - 增加代理失败时的回退机制
+        # 访问目标页面 - 增加错误处理和重试机制
         use_direct_connection = False
-        try:
-            logger.info(f"🧭 导航到: {url}")
-            await page.goto(url, timeout=60000, wait_until="networkidle")
-            logger.info(f"✅ 页面加载成功")
-        except Exception as e:
-            # 如果是代理问题，尝试不使用代理
-            if "ERR_TUNNEL_CONNECTION_FAILED" in str(e) or "ERR_PROXY_CONNECTION_FAILED" in str(e):
-                logger.warning(f"⚠️ 代理连接失败，尝试直接连接...")
-                await browser.close()
-                
-                # 重新启动浏览器不使用代理
-                if "proxy" in launch_options:
-                    del launch_options["proxy"]
-                
-                browser = await playwright.chromium.launch(**launch_options)
-                context = await browser.new_context(
-                    viewport={'width': 1280, 'height': 720},
-                    locale='en-US',
-                    bypass_csp=True
-                )
-                await context.add_init_script("""
-                    delete navigator.__proto__.webdriver;
-                    Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
-                    window.chrome = { runtime: {} };
-                """)
-                page = await context.new_page()
-                
-                logger.info(f"🧭 直接导航到: {url}")
+        navigation_attempts = 0
+        max_navigation_attempts = 3
+        navigation_success = False
+        
+        while not navigation_success and navigation_attempts < max_navigation_attempts:
+            try:
+                logger.info(f"🧭 导航到: {url} (尝试 {navigation_attempts+1}/{max_navigation_attempts})")
                 await page.goto(url, timeout=60000, wait_until="networkidle")
                 logger.info(f"✅ 页面加载成功")
-                use_direct_connection = True
-            else:
-                raise e
+                navigation_success = True
+            except Exception as e:
+                navigation_attempts += 1
+                error_str = str(e)
+                
+                # 如果是代理问题，尝试不使用代理
+                if "ERR_TUNNEL_CONNECTION_FAILED" in error_str or "ERR_PROXY_CONNECTION_FAILED" in error_str:
+                    logger.warning(f"⚠️ 代理连接失败，尝试直接连接...")
+                    await browser.close()
+                    
+                    # 重新启动浏览器不使用代理
+                    if "proxy" in launch_options:
+                        del launch_options["proxy"]
+                    
+                    browser = await playwright.chromium.launch(**launch_options)
+                    context = await browser.new_context(
+                        viewport={'width': 1280, 'height': 720},
+                        locale='en-US',
+                        bypass_csp=True
+                    )
+                    await context.add_init_script("""
+                        delete navigator.__proto__.webdriver;
+                        Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+                        window.chrome = { runtime: {} };
+                    """)
+                    page = await context.new_page()
+                    
+                    logger.info(f"🧭 直接导航到: {url}")
+                    await page.goto(url, timeout=60000, wait_until="networkidle")
+                    logger.info(f"✅ 页面加载成功")
+                    use_direct_connection = True
+                    navigation_success = True
+                # 处理连接重置错误
+                elif "ERR_CONNECTION_RESET" in error_str:
+                    logger.warning(f"⚠️ 连接被重置 (尝试 {navigation_attempts}/{max_navigation_attempts})")
+                    if navigation_attempts < max_navigation_attempts:
+                        wait_time = NETWORK_ERROR_RETRY_DELAY * navigation_attempts
+                        logger.info(f"⏱️ 等待 {wait_time} 秒后重试...")
+                        await asyncio.sleep(wait_time)
+                    else:
+                        logger.error(f"❌ 导航失败: {error_str}")
+                        return False
+                # 处理其他网络错误
+                elif "net::" in error_str:
+                    logger.warning(f"⚠️ 网络错误: {error_str} (尝试 {navigation_attempts}/{max_navigation_attempts})")
+                    if navigation_attempts < max_navigation_attempts:
+                        wait_time = NETWORK_ERROR_RETRY_DELAY * navigation_attempts
+                        logger.info(f"⏱️ 等待 {wait_time} 秒后重试...")
+                        await asyncio.sleep(wait_time)
+                    else:
+                        logger.error(f"❌ 导航失败: {error_str}")
+                        return False
+                else:
+                    logger.error(f"❌ 导航失败: {error_str}")
+                    return False
+        
+        if not navigation_success:
+            logger.error("❌ 导航失败，放弃尝试")
+            return False
         
         # 等待页面加载
         await asyncio.sleep(random.uniform(2, 4))
@@ -234,8 +270,18 @@ async def click_ads(playwright, url, selector, target, proxy=None):
             await element.evaluate("el => el.style.border = '2px solid red'")
             
             # 点击元素
-            await element.click(delay=random.randint(50, 250))
-            logger.info(f"🖱️ ✅ 深度点击 {i+1}/{click_count} 成功")
+            try:
+                await element.click(delay=random.randint(50, 250))
+                logger.info(f"🖱️ ✅ 深度点击 {i+1}/{click_count} 成功")
+            except Exception as e:
+                logger.error(f"❌ 点击失败: {str(e)}")
+                # 尝试使用其他方式点击
+                try:
+                    await element.dispatch_event("click")
+                    logger.info(f"🖱️ ✅ 备选点击方式成功")
+                except Exception as e2:
+                    logger.error(f"❌ 备选点击方式也失败: {str(e2)}")
+                    break
             
             # 点击后随机等待
             await asyncio.sleep(random.uniform(0.5, 2.5))
@@ -312,6 +358,7 @@ async def clicker_task():
         # 统计变量
         direct_connections = 0
         proxy_connections = 0
+        failed_attempts = 0
         
         while is_running:
             clicks_this_minute = 0
@@ -355,13 +402,18 @@ async def clicker_task():
                         success = True
                         clicks_this_minute += 1
                         connection_type = result
+                        failed_attempts = 0  # 重置失败计数器
                         break
                     else:
+                        # 指数退避策略
+                        backoff_time = 2 ** attempt
+                        logger.info(f"⏱️ 等待 {backoff_time} 秒后重试...")
+                        await asyncio.sleep(backoff_time)
+                        
                         if proxy:
                             # 报告代理失败并获取新代理
                             proxy_manager.report_proxy_failure(proxy)
                             proxy = await proxy_manager.get_best_proxy()
-                        await asyncio.sleep(2)  # 失败后短暂等待
                 
                 # 更新连接统计
                 if success:
@@ -369,6 +421,13 @@ async def clicker_task():
                         direct_connections += 1
                     elif connection_type == "proxy":
                         proxy_connections += 1
+                else:
+                    failed_attempts += 1
+                    # 连续失败多次时延长等待时间
+                    if failed_attempts >= 3:
+                        extended_wait = 30
+                        logger.warning(f"⚠️ 连续失败 {failed_attempts} 次，等待 {extended_wait} 秒...")
+                        await asyncio.sleep(extended_wait)
                 
                 # 每10次点击打印一次统计
                 total_connections = direct_connections + proxy_connections
