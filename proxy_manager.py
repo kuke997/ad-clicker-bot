@@ -1,4 +1,4 @@
-import requests
+import aiohttp
 import random
 import asyncio
 from datetime import datetime, timedelta
@@ -17,56 +17,52 @@ class ProxyManager:
             "https://proxylist.geonode.com/api/proxy-list?protocols=http&limit=200&country=US,GB,CA,DE",
             "https://api.proxyscrape.com/v2/?request=getproxies&protocol=http&timeout=10000&country=all",
             "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt",
-            "https://raw.githubusercontent.com/clarketm/proxy-list/master/proxy-list-raw.txt",
-            "https://raw.githubusercontent.com/ShiftyTR/Proxy-List/master/http.txt"
         ]
         
         proxies = set()
-        for url in sources:
-            try:
-                self.logger.info(f"获取代理源: {url}")
-                response = requests.get(url, timeout=20)
-                
-                if "geonode" in url:
-                    # 处理 GeoNode 的 JSON 格式
-                    data = response.json()
-                    for item in data["data"]:
-                        proxy = f"{item['ip']}:{item['port']}"
-                        proxies.add(proxy)
-                else:
-                    # 处理文本格式
-                    for line in response.text.splitlines():
-                        proxy = line.strip()
-                        if ":" in proxy and proxy not in proxies:
-                            proxies.add(proxy)
-            except Exception as e:
-                self.logger.error(f"代理源获取失败 {url}: {str(e)}")
+        async with aiohttp.ClientSession() as session:
+            for url in sources:
+                try:
+                    self.logger.info(f"获取代理源: {url}")
+                    async with session.get(url, timeout=20) as response:
+                        if "geonode" in url:
+                            data = await response.json()
+                            for item in data["data"]:
+                                proxy = f"{item['ip']}:{item['port']}"
+                                proxies.add(proxy)
+                        else:
+                            text = await response.text()
+                            for line in text.splitlines():
+                                proxy = line.strip()
+                                if ":" in proxy and proxy not in proxies:
+                                    proxies.add(proxy)
+                except Exception as e:
+                    self.logger.error(f"代理源获取失败 {url}: {str(e)}")
         
         return list(proxies)
     
     async def validate_proxy(self, proxy):
-        """使用更宽松的验证方法"""
+        """使用异步验证代理"""
         test_urls = [
-            "http://www.example.com",  # 轻量级页面
+            "http://www.example.com",
             "http://www.google.com/gen_204",
-            "http://www.cloudflare.com/cdn-cgi/trace"
         ]
         
-        for url in test_urls:
-            try:
-                start_time = datetime.now()
-                response = requests.get(
-                    url,
-                    proxies={"http": f"http://{proxy}", "https": f"http://{proxy}"},
-                    timeout=10,  # 增加超时时间
-                    headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"}
-                )
-                if response.status_code in [200, 204]:
-                    speed = (datetime.now() - start_time).total_seconds()
-                    self.logger.info(f"✅ 代理可用: {proxy} | 速度: {speed:.2f}s")
-                    return True, speed
-            except Exception as e:
-                continue
+        async with aiohttp.ClientSession() as session:
+            for url in test_urls:
+                try:
+                    start_time = datetime.now()
+                    async with session.get(
+                        url,
+                        proxy=f"http://{proxy}",
+                        timeout=10,
+                        headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"}
+                    ) as response:
+                        if response.status in [200, 204]:
+                            speed = (datetime.now() - start_time).total_seconds()
+                            return True, speed
+                except Exception as e:
+                    continue
         
         self.logger.warning(f"❌ 代理不可用: {proxy}")
         return False, 10.0
@@ -100,7 +96,7 @@ class ProxyManager:
         
         if not self.proxy_pool:
             # 添加回退机制：当没有代理时尝试直接连接
-            logger.warning("⚠️ 没有可用代理，尝试直接连接...")
+            self.logger.warning("⚠️ 没有可用代理，尝试直接连接...")
             return None
         
         # 根据评分加权随机选择
