@@ -1,35 +1,18 @@
 # 使用官方Python镜像
 FROM python:3.10-slim-bullseye
 
-# 安装Playwright依赖
+# 安装系统依赖
 RUN apt-get update && \
     apt-get install -y \
-    libnss3 \
-    libnspr4 \
-    libatk1.0-0 \
-    libatk-bridge2.0-0 \
-    libcups2 \
-    libdrm2 \
-    libxkbcommon0 \
-    libxcomposite1 \
-    libxdamage1 \
-    libxfixes3 \
-    libxrandr2 \
-    libgbm1 \
-    libpango-1.0-0 \
-    libcairo2 \
-    libasound2 \
-    libatspi2.0-0 \
-    libwayland-client0 \
-    fonts-noto-color-emoji \
-    fonts-freefont-ttf \
-    wget \
-    gnupg \
-    && rm -rf /var/lib/apt/lists/*
+    wget gnupg \
+    libnss3 libx11-xcb1 libxcomposite1 libxcursor1 \
+    libxdamage1 libxi6 libxtst6 libxrandr2 libasound2 \
+    libatk1.0-0 libatk-bridge2.0-0 libpangocairo-1.0-0 \
+    libxss1 libgtk-3-0 fonts-noto-color-emoji
 
-# 安装最新版Chromium
+# 安装Google Chrome
 RUN wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key add - \
-    && echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google-chrome.list \
+    && echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google.list \
     && apt-get update \
     && apt-get install -y google-chrome-stable \
     && rm -rf /var/lib/apt/lists/*
@@ -37,13 +20,9 @@ RUN wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key
 # 设置工作目录
 WORKDIR /app
 
-# 复制依赖文件
-COPY requirements.txt .
-
 # 安装Python依赖
+COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-
-# 安装Playwright浏览器
 RUN playwright install chromium
 
 # 复制应用代码
