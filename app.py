@@ -144,10 +144,41 @@ async def click_ads(playwright, url, selector, target, proxy=None):
         
         page = await context.new_page()
         
-        # 访问目标页面
-        logger.info(f"🧭 导航到: {url}")
-        await page.goto(url, timeout=60000, wait_until="networkidle")
-        logger.info(f"✅ 页面加载成功")
+        # 访问目标页面 - 增加代理失败时的回退机制
+        use_direct_connection = False
+        try:
+            logger.info(f"🧭 导航到: {url}")
+            await page.goto(url, timeout=60000, wait_until="networkidle")
+            logger.info(f"✅ 页面加载成功")
+        except Exception as e:
+            # 如果是代理问题，尝试不使用代理
+            if "ERR_TUNNEL_CONNECTION_FAILED" in str(e) or "ERR_PROXY_CONNECTION_FAILED" in str(e):
+                logger.warning(f"⚠️ 代理连接失败，尝试直接连接...")
+                await browser.close()
+                
+                # 重新启动浏览器不使用代理
+                if "proxy" in launch_options:
+                    del launch_options["proxy"]
+                
+                browser = await playwright.chromium.launch(**launch_options)
+                context = await browser.new_context(
+                    viewport={'width': 1280, 'height': 720},
+                    locale='en-US',
+                    bypass_csp=True
+                )
+                await context.add_init_script("""
+                    delete navigator.__proto__.webdriver;
+                    Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+                    window.chrome = { runtime: {} };
+                """)
+                page = await context.new_page()
+                
+                logger.info(f"🧭 直接导航到: {url}")
+                await page.goto(url, timeout=60000, wait_until="networkidle")
+                logger.info(f"✅ 页面加载成功")
+                use_direct_connection = True
+            else:
+                raise e
         
         # 等待页面加载
         await asyncio.sleep(random.uniform(2, 4))
@@ -212,7 +243,8 @@ async def click_ads(playwright, url, selector, target, proxy=None):
         # 更新最后成功时间
         last_successful_click = datetime.now()
         
-        return True
+        # 返回连接方式用于统计
+        return "direct" if use_direct_connection else "proxy"
     except Exception as e:
         logger.error(f"❌ 点击失败: {str(e)}")
         # 添加详细错误日志
@@ -277,6 +309,10 @@ async def clicker_task():
             logger.error(traceback.format_exc())
             targets = [{"url": "https://www.wikipedia.org", "selector": "a", "name": "测试广告", "weight": 1, "active_hours": "always", "click_depth": 1}]
         
+        # 统计变量
+        direct_connections = 0
+        proxy_connections = 0
+        
         while is_running:
             clicks_this_minute = 0
             start_time = datetime.now()
@@ -310,11 +346,15 @@ async def clicker_task():
                     logger.error(f"获取代理失败: {str(e)}")
                 
                 success = False
+                connection_type = "unknown"
                 for attempt in range(MAX_RETRIES):
                     logger.info(f"🔁 尝试 #{attempt+1} | 目标: {target['url']} | 广告位: {target.get('name', '未知')} | 代理: {proxy if proxy else '无'}")
-                    success = await click_ads(playwright, target["url"], target["selector"], target, proxy)
-                    if success:
+                    result = await click_ads(playwright, target["url"], target["selector"], target, proxy)
+                    
+                    if result:
+                        success = True
                         clicks_this_minute += 1
+                        connection_type = result
                         break
                     else:
                         if proxy:
@@ -322,6 +362,18 @@ async def clicker_task():
                             proxy_manager.report_proxy_failure(proxy)
                             proxy = await proxy_manager.get_best_proxy()
                         await asyncio.sleep(2)  # 失败后短暂等待
+                
+                # 更新连接统计
+                if success:
+                    if connection_type == "direct":
+                        direct_connections += 1
+                    elif connection_type == "proxy":
+                        proxy_connections += 1
+                
+                # 每10次点击打印一次统计
+                total_connections = direct_connections + proxy_connections
+                if total_connections > 0 and total_connections % 10 == 0:
+                    logger.info(f"📊 连接统计: 代理连接 {proxy_connections} 次, 直接连接 {direct_connections} 次")
                 
                 # 随机间隔避免检测
                 interval = random.uniform(MIN_INTERVAL, MAX_INTERVAL)
