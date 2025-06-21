@@ -4,6 +4,7 @@ import json
 import random
 import logging
 from datetime import datetime
+from pathlib import Path
 from proxy_manager import ProxyManager
 from behavior_simulator import BehaviorSimulator
 from playwright.async_api import async_playwright
@@ -77,6 +78,17 @@ async def click_ads(playwright, url, selector, target, proxy=None):
     
     browser = None
     try:
+        # 检查Chromium是否存在
+        chromium_path = Path("/ms-playwright/chromium/chrome-linux/chrome")
+        if not chromium_path.exists():
+            logger.error(f"❌ Chromium not found at {chromium_path}")
+            # 尝试重新安装
+            logger.warning("⚠️ Attempting to reinstall Chromium...")
+            os.system("PLAYWRIGHT_BROWSERS_PATH=/ms-playwright npx playwright install chromium --with-deps")
+            if not chromium_path.exists():
+                logger.error("❌ Failed to reinstall Chromium")
+                return False
+        
         logger.info(f"🌐 访问目标: {url} | 选择器: {selector} | 广告位: {target.get('name', '未知')}")
         
         # 配置浏览器选项
@@ -89,14 +101,16 @@ async def click_ads(playwright, url, selector, target, proxy=None):
                 "--disable-dev-shm-usage",  # 解决Docker内存问题
                 "--single-process",         # 减少资源占用
                 f"--user-agent={get_random_user_agent()}"
-            ]
+            ],
+            # 指定Chromium可执行路径
+            "executable_path": "/ms-playwright/chromium/chrome-linux/chrome"
         }
         
         # 如果提供了代理，添加到启动选项
         if proxy:
             launch_options["proxy"] = {"server": f"http://{proxy}"}
         
-        # 启动浏览器 (使用默认路径)
+        # 启动浏览器
         logger.info("🚀 启动Chromium浏览器...")
         browser = await playwright.chromium.launch(**launch_options)
         
