@@ -319,41 +319,49 @@ async def click_ads(playwright, url, selector, target, proxy=None):
             
             # === 新增功能：广告页面浏览 ===
             try:
-                # 等待新页面或导航发生
-                async with asyncio.timeout(5):  # 等待5秒
-                    popup_event = asyncio.create_task(context.wait_for_event("page"))
-                    nav_event = asyncio.create_task(page.wait_for_event("framenavigated"))
-                    done, pending = await asyncio.wait(
-                        {popup_event, nav_event},
-                        return_when=asyncio.FIRST_COMPLETED
-                    )
-                    
-                    # 取消未完成的任务
-                    for task in pending:
-                        task.cancel()
-                    
-                    # 处理新页面或导航
-                    ad_page = None
-                    if popup_event in done:
-                        ad_page = popup_event.result()
+                # 等待新页面或导航发生（兼容旧版Python）
+                popup_task = asyncio.create_task(context.wait_for_event("page"))
+                nav_task = asyncio.create_task(page.wait_for_event("framenavigated"))
+                
+                # 使用兼容方式等待事件或超时
+                done, pending = await asyncio.wait(
+                    {popup_task, nav_task},
+                    timeout=5,  # 5秒超时
+                    return_when=asyncio.FIRST_COMPLETED
+                )
+                
+                # 取消未完成的任务
+                for task in pending:
+                    task.cancel()
+                
+                # 处理新页面或导航
+                ad_page = None
+                if popup_task in done:
+                    try:
+                        ad_page = popup_task.result()
                         logger.info(f"🪟 检测到新标签页: {ad_page.url}")
-                    elif nav_event in done:
-                        logger.info(f"🧭 检测到页面导航: {page.url}")
-                        ad_page = page
+                    except Exception:
+                        logger.warning("⚠️ 获取新标签页失败")
+                elif nav_task in done:
+                    logger.info(f"🧭 检测到页面导航: {page.url}")
+                    ad_page = page
+                else:
+                    logger.info("⏱️ 未检测到广告页面跳转")
+                    continue
+                
+                # 在广告页面模拟浏览
+                if ad_page:
+                    await simulate_ad_browse(ad_page)
                     
-                    # 在广告页面模拟浏览
-                    if ad_page:
-                        await simulate_ad_browse(ad_page)
-                        
-                        # 如果是新标签页，关闭它
-                        if ad_page != page:
-                            await ad_page.close()
-                        else:
-                            # 如果是当前页面导航，返回原始页面
-                            await page.go_back()
-                            await page.wait_for_load_state("networkidle", timeout=60000)
+                    # 如果是新标签页，关闭它
+                    if ad_page != page:
+                        await ad_page.close()
+                    else:
+                        # 如果是当前页面导航，返回原始页面
+                        await page.go_back()
+                        await page.wait_for_load_state("networkidle", timeout=60000)
             except asyncio.TimeoutError:
-                logger.info("⏱️ 未检测到广告页面跳转")
+                logger.info("⏱️ 等待广告页面跳转超时")
             except Exception as e:
                 logger.error(f"⚠️ 广告浏览出错: {str(e)}")
             
