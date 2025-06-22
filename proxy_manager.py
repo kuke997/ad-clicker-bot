@@ -60,30 +60,35 @@ class ProxyManager:
         return list(proxies)[:50]  # 限制为50个
     
     async def validate_proxy(self, proxy):
-        """优化代理验证，减少测试URL"""
-        # 使用单个可靠的测试URL
-        test_url = "http://www.google.com/gen_204"
+        """优化代理验证，使用国内可访问的测试站点"""
+        # 使用国内可访问的测试URL
+        test_urls = [
+            "http://www.baidu.com",
+            "http://www.qq.com",
+            "http://www.163.com"
+        ]
         
         async with aiohttp.ClientSession() as session:
-            try:
-                start_time = time.time()
-                # 减少超时时间到8秒
-                timeout = aiohttp.ClientTimeout(total=8)
-                
-                async with session.get(
-                    test_url,
-                    proxy=f"http://{proxy}",
-                    timeout=timeout,
-                    headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"},
-                    ssl=False
-                ) as response:
-                    if response.status == 204:
-                        speed = time.time() - start_time
-                        return True, speed
-            except asyncio.TimeoutError:
-                self.logger.debug(f"⌛ 代理验证超时: {proxy}")
-            except Exception as e:
-                self.logger.debug(f"代理验证失败: {proxy} - {str(e)}")
+            for test_url in test_urls:
+                try:
+                    start_time = time.time()
+                    # 减少超时时间到5秒
+                    timeout = aiohttp.ClientTimeout(total=5)
+                    
+                    async with session.get(
+                        test_url,
+                        proxy=f"http://{proxy}",
+                        timeout=timeout,
+                        headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"},
+                        ssl=False
+                    ) as response:
+                        if response.status == 200:
+                            speed = time.time() - start_time
+                            return True, speed
+                except asyncio.TimeoutError:
+                    self.logger.debug(f"⌛ 代理验证超时: {proxy}")
+                except Exception as e:
+                    self.logger.debug(f"代理验证失败: {proxy} - {str(e)}")
         
         return False, 10.0
     
