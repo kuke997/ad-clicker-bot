@@ -19,7 +19,7 @@ NETWORK_ERROR_RETRY_DELAY = 10  # 网络错误重试延迟（秒）
 
 # 日志配置
 logging.basicConfig(
-    level=logging.DEBUG,  # 改为DEBUG级别获取更多信息
+    level=logging.INFO,  # 降低日志级别为INFO
     format='%(asctime)s [%(levelname)s] %(message)s',
     handlers=[
         logging.StreamHandler(),
@@ -62,8 +62,11 @@ async def self_keep_alive():
         if proxy_manager:
             # 重新创建代理管理器并更新代理池
             proxy_manager = ProxyManager()
-            await proxy_manager.update_proxy_pool()
-            logger.info("🔄 代理池已重置")
+            try:
+                await proxy_manager.update_proxy_pool()
+                logger.info("🔄 代理池已重置")
+            except Exception as e:
+                logger.error(f"重置代理池失败: {str(e)}")
         else:
             logger.error("代理管理器未初始化，无法重置")
         
@@ -347,8 +350,8 @@ async def clicker_task():
     proxy_manager = ProxyManager()
     
     async with async_playwright() as playwright:
-        # 首次代理池更新
-        await proxy_manager.update_proxy_pool()
+        # 首次代理池更新（非阻塞，不等待完成）
+        asyncio.create_task(proxy_manager.update_proxy_pool())
         
         # 加载广告目标
         try:
@@ -388,13 +391,13 @@ async def clicker_task():
                 
                 target = random.choice(weighted_targets)
                 
-                # 获取代理（如果可用）
+                # 获取代理（如果可用）- 增加超时处理
                 proxy = None
                 try:
-                    proxy = await proxy_manager.get_best_proxy()
-                    if not proxy:
-                        logger.warning("⚠️ 没有可用代理，尝试直接连接...")
-                        # 这里不设置代理，后续会使用直接连接
+                    # 设置超时时间为10秒
+                    proxy = await asyncio.wait_for(proxy_manager.get_best_proxy(), timeout=10)
+                except asyncio.TimeoutError:
+                    logger.warning("⌛ 获取代理超时，尝试直接连接...")
                 except Exception as e:
                     logger.error(f"获取代理失败: {str(e)}")
                 
@@ -420,9 +423,8 @@ async def clicker_task():
                             # 报告代理失败并获取新代理
                             proxy_manager.report_proxy_failure(proxy)
                             try:
-                                proxy = await proxy_manager.get_best_proxy()
-                            except Exception as e:
-                                logger.error(f"获取新代理失败: {str(e)}")
+                                proxy = await asyncio.wait_for(proxy_manager.get_best_proxy(), timeout=5)
+                            except:
                                 proxy = None
                 
                 # 更新连接统计
@@ -464,9 +466,25 @@ async def clicker_task():
 @app.on_event("startup")
 async def startup_event():
     """应用启动时开始点击任务"""
-    global task
-    task = asyncio.create_task(clicker_task())
+    global task, proxy_manager
     logger.info("✅ FastAPI 应用启动")
+    
+    # 初始化代理管理器
+    proxy_manager = ProxyManager()
+    
+    # 确保任务启动，即使代理初始化失败
+    async def safe_task_launcher():
+        try:
+            # 非阻塞更新代理池
+            asyncio.create_task(proxy_manager.update_proxy_pool())
+        except Exception as e:
+            logger.error(f"代理初始化失败: {str(e)}，但将继续运行")
+        
+        # 启动点击任务
+        global task
+        task = asyncio.create_task(clicker_task())
+    
+    asyncio.create_task(safe_task_launcher())
     
     # 添加定期状态日志
     async def status_logger():
