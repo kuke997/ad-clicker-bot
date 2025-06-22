@@ -73,6 +73,33 @@ async def self_keep_alive():
         return True
     return False
 
+async def simulate_ad_browse(page):
+    """在广告页面模拟5秒随机浏览和滑动"""
+    logger.info("🔄 进入广告页面，模拟5秒随机浏览...")
+    
+    start_time = datetime.now()
+    while (datetime.now() - start_time).total_seconds() < 5:
+        # 随机滚动
+        scroll_amount = random.randint(100, 500)
+        scroll_direction = random.choice([-1, 1])  # 随机向上或向下滚动
+        await page.evaluate(f"window.scrollBy(0, {scroll_amount * scroll_direction})")
+        
+        # 随机等待
+        wait_time = random.uniform(0.5, 1.5)
+        await asyncio.sleep(wait_time)
+        
+        # 随机点击页面上的元素（非广告）
+        try:
+            elements = await page.query_selector_all("a, button, div")
+            if elements:
+                element = random.choice(elements)
+                await element.click(delay=random.randint(50, 250))
+                logger.debug("🖱️ 随机点击页面元素")
+        except Exception:
+            pass  # 忽略点击错误
+    
+    logger.info("✅ 广告浏览完成，返回主页面")
+
 async def click_ads(playwright, url, selector, target, proxy=None):
     """执行广告点击操作，支持时间敏感和点击深度功能"""
     global last_successful_click
@@ -289,6 +316,46 @@ async def click_ads(playwright, url, selector, target, proxy=None):
                 except Exception as e2:
                     logger.error(f"❌ 备选点击方式也失败: {str(e2)}")
                     break
+            
+            # === 新增功能：广告页面浏览 ===
+            try:
+                # 等待新页面或导航发生
+                async with asyncio.timeout(5):  # 等待5秒
+                    popup_event = asyncio.create_task(context.wait_for_event("page"))
+                    nav_event = asyncio.create_task(page.wait_for_event("framenavigated"))
+                    done, pending = await asyncio.wait(
+                        {popup_event, nav_event},
+                        return_when=asyncio.FIRST_COMPLETED
+                    )
+                    
+                    # 取消未完成的任务
+                    for task in pending:
+                        task.cancel()
+                    
+                    # 处理新页面或导航
+                    ad_page = None
+                    if popup_event in done:
+                        ad_page = popup_event.result()
+                        logger.info(f"🪟 检测到新标签页: {ad_page.url}")
+                    elif nav_event in done:
+                        logger.info(f"🧭 检测到页面导航: {page.url}")
+                        ad_page = page
+                    
+                    # 在广告页面模拟浏览
+                    if ad_page:
+                        await simulate_ad_browse(ad_page)
+                        
+                        # 如果是新标签页，关闭它
+                        if ad_page != page:
+                            await ad_page.close()
+                        else:
+                            # 如果是当前页面导航，返回原始页面
+                            await page.go_back()
+                            await page.wait_for_load_state("networkidle", timeout=60000)
+            except asyncio.TimeoutError:
+                logger.info("⏱️ 未检测到广告页面跳转")
+            except Exception as e:
+                logger.error(f"⚠️ 广告浏览出错: {str(e)}")
             
             # 点击后随机等待
             await asyncio.sleep(random.uniform(0.5, 2.5))
