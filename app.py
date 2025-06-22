@@ -9,18 +9,17 @@ from proxy_manager import ProxyManager
 from behavior_simulator import BehaviorSimulator
 from playwright.async_api import async_playwright
 from fastapi import FastAPI
-import aiohttp  # 新增用于保活请求
 
 # 配置参数
-CLICKS_PER_MINUTE = 3  # 降低点击频率，减少资源消耗
-MIN_INTERVAL = 8  # 秒
-MAX_INTERVAL = 20  # 秒
+CLICKS_PER_MINUTE = 8
+MIN_INTERVAL = 5  # 秒
+MAX_INTERVAL = 15  # 秒
 MAX_RETRIES = 3
 NETWORK_ERROR_RETRY_DELAY = 10  # 网络错误重试延迟（秒）
 
 # 日志配置
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.INFO,  # 降低日志级别为INFO
     format='%(asctime)s [%(levelname)s] %(message)s',
     handlers=[
         logging.StreamHandler(),
@@ -34,8 +33,7 @@ logger = logging.getLogger("ad-clicker-bot")
 last_successful_click = datetime.now()
 is_running = False
 task = None
-proxy_manager = None
-browser_instance = None  # 全局浏览器实例
+proxy_manager = None  # 代理管理器全局实例
 
 # 创建 FastAPI 应用
 app = FastAPI()
@@ -75,39 +73,11 @@ async def self_keep_alive():
         return True
     return False
 
-async def create_browser(playwright, proxy=None):
-    """创建浏览器实例"""
-    # 配置浏览器选项
-    launch_options = {
-        "headless": True,
-        "args": [
-            "--disable-blink-features=AutomationControlled",
-            "--disable-infobars",
-            "--no-sandbox",
-            "--disable-dev-shm-usage",  # 解决Docker内存问题
-            "--single-process",         # 减少资源占用
-            f"--user-agent={get_random_user_agent()}",
-            # 简化GPU参数
-            "--disable-gpu",
-            "--disable-software-rasterizer"
-        ],
-        # 指定Chromium可执行路径
-        "executable_path": "/ms-playwright/chromium/chrome-linux/chrome"
-    }
-    
-    # 如果提供了代理，添加到启动选项
-    if proxy:
-        launch_options["proxy"] = {"server": f"http://{proxy}"}
-    
-    # 启动浏览器
-    logger.info("🚀 启动Chromium浏览器...")
-    return await playwright.chromium.launch(**launch_options)
-
 async def click_ads(playwright, url, selector, target, proxy=None):
     """执行广告点击操作，支持时间敏感和点击深度功能"""
-    global last_successful_click, browser_instance
+    global last_successful_click
     
-    context = None
+    browser = None
     try:
         # 检查Chromium是否存在
         chromium_path = Path("/ms-playwright/chromium/chrome-linux/chrome")
@@ -122,12 +92,44 @@ async def click_ads(playwright, url, selector, target, proxy=None):
         
         logger.info(f"🌐 访问目标: {url} | 选择器: {selector} | 广告位: {target.get('name', '未知')}")
         
-        # 复用浏览器实例或创建新实例
-        if not browser_instance:
-            browser_instance = await create_browser(playwright, proxy)
+        # 配置浏览器选项
+        launch_options = {
+            "headless": True,
+            "args": [
+                "--disable-blink-features=AutomationControlled",
+                "--disable-infobars",
+                "--no-sandbox",
+                "--disable-dev-shm-usage",  # 解决Docker内存问题
+                "--single-process",         # 减少资源占用
+                f"--user-agent={get_random_user_agent()}",
+                # 添加GPU禁用参数
+                "--disable-gpu",
+                "--disable-software-rasterizer",
+                "--disable-gl-drawing-for-tests",
+                "--disable-breakpad",
+                "--disable-setuid-sandbox",
+                "--no-zygote",
+                "--ignore-gpu-blocklist",
+                "--disable-gpu-early-init",
+                "--disable-gpu-sandbox",
+                "--enable-webgl",
+                "--use-gl=swiftshader",
+                "--use-angle=swiftshader"
+            ],
+            # 指定Chromium可执行路径
+            "executable_path": "/ms-playwright/chromium/chrome-linux/chrome"
+        }
+        
+        # 如果提供了代理，添加到启动选项
+        if proxy:
+            launch_options["proxy"] = {"server": f"http://{proxy}"}
+        
+        # 启动浏览器
+        logger.info("🚀 启动Chromium浏览器...")
+        browser = await playwright.chromium.launch(**launch_options)
         
         # 创建浏览器上下文
-        context = await browser_instance.new_context(
+        context = await browser.new_context(
             viewport={'width': 1280, 'height': 720},
             locale='en-US',
             # 禁用WebDriver检测
@@ -152,16 +154,53 @@ async def click_ads(playwright, url, selector, target, proxy=None):
         while not navigation_success and navigation_attempts < max_navigation_attempts:
             try:
                 logger.info(f"🧭 导航到: {url} (尝试 {navigation_attempts+1}/{max_navigation_attempts})")
-                await page.goto(url, timeout=60000, wait_until="domcontentloaded")  # 降低等待要求
+                await page.goto(url, timeout=60000, wait_until="networkidle")
                 logger.info(f"✅ 页面加载成功")
                 navigation_success = True
             except Exception as e:
                 navigation_attempts += 1
                 error_str = str(e)
                 
-                # 处理超时错误
-                if "Timeout" in error_str:
-                    logger.warning(f"⚠️ 页面加载超时 (尝试 {navigation_attempts}/{max_navigation_attempts})")
+                # 如果是代理问题，尝试不使用代理
+                if "ERR_TUNNEL_CONNECTION_FAILED" in error_str or "ERR_PROXY_CONNECTION_FAILED" in error_str:
+                    logger.warning(f"⚠️ 代理连接失败，尝试直接连接...")
+                    await browser.close()
+                    
+                    # 重新启动浏览器不使用代理
+                    if "proxy" in launch_options:
+                        del launch_options["proxy"]
+                    
+                    browser = await playwright.chromium.launch(**launch_options)
+                    context = await browser.new_context(
+                        viewport={'width': 1280, 'height': 720},
+                        locale='en-US',
+                        bypass_csp=True
+                    )
+                    await context.add_init_script("""
+                        delete navigator.__proto__.webdriver;
+                        Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+                        window.chrome = { runtime: {} };
+                    """)
+                    page = await context.new_page()
+                    
+                    logger.info(f"🧭 直接导航到: {url}")
+                    await page.goto(url, timeout=60000, wait_until="networkidle")
+                    logger.info(f"✅ 页面加载成功")
+                    use_direct_connection = True
+                    navigation_success = True
+                # 处理连接重置错误
+                elif "ERR_CONNECTION_RESET" in error_str or "ERR_EMPTY_RESPONSE" in error_str:
+                    logger.warning(f"⚠️ 网络错误: {error_str} (尝试 {navigation_attempts}/{max_navigation_attempts})")
+                    if navigation_attempts < max_navigation_attempts:
+                        wait_time = NETWORK_ERROR_RETRY_DELAY * navigation_attempts
+                        logger.info(f"⏱️ 等待 {wait_time} 秒后重试...")
+                        await asyncio.sleep(wait_time)
+                    else:
+                        logger.error(f"❌ 导航失败: {error_str}")
+                        return False
+                # 处理其他网络错误
+                elif "net::" in error_str:
+                    logger.warning(f"⚠️ 网络错误: {error_str} (尝试 {navigation_attempts}/{max_navigation_attempts})")
                     if navigation_attempts < max_navigation_attempts:
                         wait_time = NETWORK_ERROR_RETRY_DELAY * navigation_attempts
                         logger.info(f"⏱️ 等待 {wait_time} 秒后重试...")
@@ -178,7 +217,7 @@ async def click_ads(playwright, url, selector, target, proxy=None):
             return False
         
         # 等待页面加载
-        await asyncio.sleep(random.uniform(1, 3))
+        await asyncio.sleep(random.uniform(2, 4))
         
         # 模拟人类行为
         logger.info("🧠 模拟人类行为...")
@@ -210,7 +249,7 @@ async def click_ads(playwright, url, selector, target, proxy=None):
         for i in range(click_count):
             # 等待元素可能出现
             try:
-                await page.wait_for_selector(clickable_selector, timeout=3000, state="attached")
+                await page.wait_for_selector(clickable_selector, timeout=5000, state="attached")
             except Exception as e:
                 logger.warning(f"⏳ 等待元素超时: {clickable_selector}")
             
@@ -219,10 +258,23 @@ async def click_ads(playwright, url, selector, target, proxy=None):
             
             if not elements:
                 logger.warning(f"⚠️ 未找到可点击元素: {clickable_selector}")
+                # 尝试截图用于调试
+                try:
+                    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                    await page.screenshot(path=f"screenshot_error_{timestamp}.png")
+                    logger.info(f"📸 已保存错误截图: screenshot_error_{timestamp}.png")
+                except Exception as e:
+                    logger.error(f"截图失败: {str(e)}")
                 break
             
             # 随机选择一个元素点击
             element = random.choice(elements)
+            
+            # 高亮元素用于调试
+            try:
+                await element.evaluate("el => el.style.border = '2px solid red'")
+            except Exception as e:
+                logger.warning(f"⚠️ 无法高亮元素: {str(e)}")
             
             # 点击元素
             try:
@@ -230,10 +282,16 @@ async def click_ads(playwright, url, selector, target, proxy=None):
                 logger.info(f"🖱️ ✅ 深度点击 {i+1}/{click_count} 成功")
             except Exception as e:
                 logger.error(f"❌ 点击失败: {str(e)}")
-                break
+                # 尝试使用其他方式点击
+                try:
+                    await element.dispatch_event("click")
+                    logger.info(f"🖱️ ✅ 备选点击方式成功")
+                except Exception as e2:
+                    logger.error(f"❌ 备选点击方式也失败: {str(e2)}")
+                    break
             
             # 点击后随机等待
-            await asyncio.sleep(random.uniform(0.5, 1.5))
+            await asyncio.sleep(random.uniform(0.5, 2.5))
         
         # 更新最后成功时间
         last_successful_click = datetime.now()
@@ -242,13 +300,16 @@ async def click_ads(playwright, url, selector, target, proxy=None):
         return "direct" if use_direct_connection else "proxy"
     except Exception as e:
         logger.error(f"❌ 点击失败: {str(e)}")
+        # 添加详细错误日志
+        import traceback
+        logger.debug(f"错误详情: {traceback.format_exc()}")
         return False
     finally:
-        if context:
+        if browser:
             try:
-                await context.close()
+                await browser.close()
             except Exception as e:
-                logger.warning(f"⚠️ 关闭上下文时出错: {str(e)}")
+                logger.warning(f"⚠️ 关闭浏览器时出错: {str(e)}")
 
 def should_skip_target(target):
     """检查广告目标是否应跳过（基于时间敏感配置）"""
@@ -280,7 +341,7 @@ def should_skip_target(target):
 
 async def clicker_task():
     """广告点击后台任务，支持时间敏感功能"""
-    global last_successful_click, is_running, proxy_manager, browser_instance
+    global last_successful_click, is_running, proxy_manager
     
     is_running = True
     logger.info("🚀 广告点击任务启动")
@@ -299,6 +360,9 @@ async def clicker_task():
             logger.info(f"✅ 成功加载 {len(targets)} 个广告目标")
         except Exception as e:
             logger.error(f"加载广告目标失败: {str(e)}")
+            # 添加详细错误信息
+            import traceback
+            logger.error(traceback.format_exc())
             targets = [{"url": "https://www.wikipedia.org", "selector": "a", "name": "测试广告", "weight": 1, "active_hours": "always", "click_depth": 1}]
         
         # 统计变量
@@ -340,21 +404,16 @@ async def clicker_task():
                 success = False
                 connection_type = "unknown"
                 for attempt in range(MAX_RETRIES):
-                    try:
-                        logger.info(f"🔁 尝试 #{attempt+1} | 目标: {target['url']} | 广告位: {target.get('name', '未知')} | 代理: {proxy if proxy else '无'}")
-                        result = await asyncio.wait_for(click_ads(playwright, target["url"], target["selector"], target, proxy), timeout=120)
-                        
-                        if result:
-                            success = True
-                            clicks_this_minute += 1
-                            connection_type = result
-                            failed_attempts = 0  # 重置失败计数器
-                            break
-                    except asyncio.TimeoutError:
-                        logger.warning("⌛ 点击操作超时，跳过本次尝试...")
-                        result = False
+                    logger.info(f"🔁 尝试 #{attempt+1} | 目标: {target['url']} | 广告位: {target.get('name', '未知')} | 代理: {proxy if proxy else '无'}")
+                    result = await click_ads(playwright, target["url"], target["selector"], target, proxy)
                     
-                    if not success:
+                    if result:
+                        success = True
+                        clicks_this_minute += 1
+                        connection_type = result
+                        failed_attempts = 0  # 重置失败计数器
+                        break
+                    else:
                         # 指数退避策略
                         backoff_time = min(30, 2 ** attempt)  # 最大等待30秒
                         logger.info(f"⏱️ 等待 {backoff_time} 秒后重试...")
@@ -404,20 +463,6 @@ async def clicker_task():
                 if await self_keep_alive():
                     logger.info("🔄 状态已重置，继续执行...")
 
-async def keep_alive():
-    """定期发送请求防止Render休眠"""
-    while is_running:
-        try:
-            async with aiohttp.ClientSession() as session:
-                # 替换为您的实际Render应用URL
-                await session.get("https://your-render-app.onrender.com/health", timeout=10)
-                logger.info("🆗 发送保活请求")
-        except Exception as e:
-            logger.error(f"保活请求失败: {str(e)}")
-        
-        # 每10分钟唤醒一次（Render休眠阈值是30分钟）
-        await asyncio.sleep(600)
-
 @app.on_event("startup")
 async def startup_event():
     """应用启动时开始点击任务"""
@@ -427,15 +472,23 @@ async def startup_event():
     # 初始化代理管理器
     proxy_manager = ProxyManager()
     
-    # 启动点击任务
-    task = asyncio.create_task(clicker_task())
+    # 确保任务启动，即使代理初始化失败
+    async def safe_task_launcher():
+        try:
+            # 非阻塞更新代理池
+            asyncio.create_task(proxy_manager.update_proxy_pool())
+        except Exception as e:
+            logger.error(f"代理初始化失败: {str(e)}，但将继续运行")
+        
+        # 启动点击任务
+        global task
+        task = asyncio.create_task(clicker_task())
     
-    # 启动保活任务
-    asyncio.create_task(keep_alive())
+    asyncio.create_task(safe_task_launcher())
     
     # 添加定期状态日志
     async def status_logger():
-        while is_running:
+        while True:
             time_since = (datetime.now() - last_successful_click).total_seconds()
             # 检查代理管理器是否初始化
             proxy_count = 0
@@ -449,7 +502,7 @@ async def startup_event():
 @app.on_event("shutdown")
 async def shutdown_event():
     """应用关闭时停止任务"""
-    global is_running, task, browser_instance
+    global is_running, task
     is_running = False
     if task:
         task.cancel()
@@ -457,14 +510,6 @@ async def shutdown_event():
             await task
         except asyncio.CancelledError:
             pass
-    
-    if browser_instance:
-        try:
-            await browser_instance.close()
-            logger.info("✅ 浏览器已关闭")
-        except Exception as e:
-            logger.error(f"关闭浏览器时出错: {str(e)}")
-    
     logger.info("🛑 应用已停止")
 
 @app.get("/")
