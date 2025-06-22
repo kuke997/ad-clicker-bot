@@ -305,6 +305,7 @@ async def click_ads(playwright, url, selector, target, proxy=None):
             
             # 记录点击前的URL
             original_url = page.url
+            logger.debug(f"📌 点击前URL: {original_url}")
             
             # 点击元素
             try:
@@ -324,39 +325,58 @@ async def click_ads(playwright, url, selector, target, proxy=None):
             try:
                 # 等待页面变化（导航或新页面）
                 ad_page = None
+                ad_page_type = "unknown"
                 
-                # 情况1：当前页面导航
+                # 方法1：等待页面导航事件（当前页面变化）
                 try:
-                    # 等待页面导航发生
-                    await page.wait_for_event("framenavigated", timeout=5000)
+                    await page.wait_for_event("framenavigated", timeout=3000)
                     logger.info(f"🧭 检测到页面导航: {page.url}")
                     ad_page = page
+                    ad_page_type = "navigation"
                 except asyncio.TimeoutError:
                     pass
                 
-                # 情况2：新标签页打开
+                # 方法2：检查是否有新页面打开
                 if not ad_page:
                     try:
-                        # 等待新页面打开
                         popup = await context.wait_for_event("page", timeout=3000)
                         logger.info(f"🪟 检测到新标签页: {popup.url}")
                         ad_page = popup
+                        ad_page_type = "popup"
                     except asyncio.TimeoutError:
                         pass
                 
-                # 情况3：URL发生变化
+                # 方法3：检查URL是否变化（作为后备方案）
                 if not ad_page and page.url != original_url:
-                    logger.info(f"🔗 检测到URL变化: {original_url} -> {page.url}")
+                    logger.info(f"🔗 URL变化: {original_url} -> {page.url}")
                     ad_page = page
+                    ad_page_type = "url_change"
+                
+                # 方法4：检查页面是否重定向（使用历史记录）
+                if not ad_page:
+                    try:
+                        history = await page.evaluate("() => window.history.length")
+                        if history > 1:
+                            logger.info(f"📜 检测到历史记录变化: {history} 条记录")
+                            ad_page = page
+                            ad_page_type = "history_change"
+                    except Exception:
+                        pass
                 
                 # 如果检测到广告页面，进行浏览
                 if ad_page:
+                    logger.info(f"🔍 检测到广告页面 ({ad_page_type})")
+                    
                     # 确保切换到广告页面
                     if ad_page != page:
                         await ad_page.bring_to_front()
                     
                     # 等待广告页面加载
-                    await ad_page.wait_for_load_state("networkidle", timeout=10000)
+                    try:
+                        await ad_page.wait_for_load_state("networkidle", timeout=10000)
+                        logger.info("✅ 广告页面加载完成")
+                    except Exception as e:
+                        logger.warning(f"⚠️ 广告页面加载超时: {str(e)}")
                     
                     # 模拟浏览行为
                     await simulate_ad_browse(ad_page)
@@ -367,10 +387,24 @@ async def click_ads(playwright, url, selector, target, proxy=None):
                         await page.bring_to_front()  # 切换回原始页面
                     else:
                         # 返回原始页面
-                        await page.go_back()
-                        await page.wait_for_load_state("networkidle", timeout=60000)
+                        try:
+                            await page.go_back()
+                            await page.wait_for_load_state("networkidle", timeout=60000)
+                            logger.info("↩️ 已返回原始页面")
+                        except Exception as e:
+                            logger.error(f"❌ 返回原始页面失败: {str(e)}")
                 else:
                     logger.info("⏱️ 未检测到广告页面跳转")
+                    # 尝试手动检查URL变化
+                    current_url = page.url
+                    if current_url != original_url:
+                        logger.info(f"🔍 手动检测到URL变化: {original_url} -> {current_url}")
+                        await simulate_ad_browse(page)
+                        try:
+                            await page.go_back()
+                            await page.wait_for_load_state("networkidle", timeout=60000)
+                        except Exception:
+                            pass
             except Exception as e:
                 logger.error(f"⚠️ 广告浏览出错: {str(e)}")
                 # 尝试返回原始页面
