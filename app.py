@@ -33,6 +33,7 @@ logger = logging.getLogger("ad-clicker-bot")
 last_successful_click = datetime.now()
 is_running = False
 task = None
+proxy_manager = None  # 代理管理器全局实例
 
 # 创建 FastAPI 应用
 app = FastAPI()
@@ -49,29 +50,25 @@ def get_random_user_agent():
     return random.choice(user_agents)
 
 async def self_keep_alive():
-    """自保活机制 - 当检测到长时间无成功点击时重启任务"""
-    global last_successful_click
+    """自保活机制 - 当检测到长时间无成功点击时重置状态"""
+    global last_successful_click, proxy_manager
     
-    while True:
-        await asyncio.sleep(300)  # 每5分钟检查一次
+    time_since_last_success = (datetime.now() - last_successful_click).total_seconds()
+    if time_since_last_success > 1800:  # 30分钟无成功点击
+        logger.warning("⚠️ 长时间无成功点击，重置状态...")
+        last_successful_click = datetime.now()
         
-        time_since_last_success = (datetime.now() - last_successful_click).total_seconds()
-        if time_since_last_success > 1800:  # 30分钟无成功点击
-            logger.warning("⚠️ 长时间无成功点击，重启任务...")
-            # 通过取消任务并重新创建来重启
-            global task, is_running
-            is_running = False
-            if task:
-                task.cancel()
-                try:
-                    await task
-                except asyncio.CancelledError:
-                    pass
-            is_running = True
-            task = asyncio.create_task(clicker_task())
-            last_successful_click = datetime.now()
-            return True
-        return False
+        # 重置代理管理器
+        if proxy_manager:
+            # 重新创建代理管理器并更新代理池
+            proxy_manager = ProxyManager()
+            await proxy_manager.update_proxy_pool()
+            logger.info("🔄 代理池已重置")
+        else:
+            logger.error("代理管理器未初始化，无法重置")
+        
+        return True
+    return False
 
 async def click_ads(playwright, url, selector, target, proxy=None):
     """执行广告点击操作，支持时间敏感和点击深度功能"""
@@ -341,7 +338,7 @@ def should_skip_target(target):
 
 async def clicker_task():
     """广告点击后台任务，支持时间敏感功能"""
-    global last_successful_click, is_running
+    global last_successful_click, is_running, proxy_manager
     
     is_running = True
     logger.info("🚀 广告点击任务启动")
@@ -460,10 +457,9 @@ async def clicker_task():
                     logger.info(f"⏱️ 等待 {sleep_time:.1f}秒进入下一分钟")
                     await asyncio.sleep(sleep_time)
                 
-                # 检查是否需要重启
+                # 检查是否需要重置状态
                 if await self_keep_alive():
-                    logger.info("🔄 重新启动点击任务...")
-                    return
+                    logger.info("🔄 状态已重置，继续执行...")
 
 @app.on_event("startup")
 async def startup_event():
@@ -471,6 +467,19 @@ async def startup_event():
     global task
     task = asyncio.create_task(clicker_task())
     logger.info("✅ FastAPI 应用启动")
+    
+    # 添加定期状态日志
+    async def status_logger():
+        while True:
+            time_since = (datetime.now() - last_successful_click).total_seconds()
+            # 检查代理管理器是否初始化
+            proxy_count = 0
+            if proxy_manager and hasattr(proxy_manager, 'proxy_pool'):
+                proxy_count = len(proxy_manager.proxy_pool)
+            logger.info(f"📊 当前状态: 运行中 | 最后点击: {time_since:.0f}秒前 | 代理数: {proxy_count}")
+            await asyncio.sleep(300)  # 每5分钟记录一次
+    
+    asyncio.create_task(status_logger())
 
 @app.on_event("shutdown")
 async def shutdown_event():
@@ -478,7 +487,11 @@ async def shutdown_event():
     global is_running, task
     is_running = False
     if task:
-        await task
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
     logger.info("🛑 应用已停止")
 
 @app.get("/")
