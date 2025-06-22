@@ -4,6 +4,7 @@ import asyncio
 from datetime import datetime, timedelta
 import logging
 import re
+import time
 
 class ProxyManager:
     def __init__(self):
@@ -12,6 +13,7 @@ class ProxyManager:
         self.logger = logging.getLogger("proxy_manager")
         self.proxy_score = {}
         self.failed_proxies = set()
+        self.lock = asyncio.Lock()  # 添加锁机制
     
     async def fetch_proxies(self):
         """使用更可靠的代理源，包括HTTPS代理"""
@@ -67,7 +69,7 @@ class ProxyManager:
         async with aiohttp.ClientSession() as session:
             for url in test_urls:
                 try:
-                    start_time = datetime.now()
+                    start_time = time.time()
                     # 增加超时时间到20秒
                     timeout = aiohttp.ClientTimeout(total=20)
                     
@@ -82,7 +84,7 @@ class ProxyManager:
                         ssl=False  # 禁用SSL验证以加快速度
                     ) as response:
                         if response.status in [200, 204]:
-                            speed = (datetime.now() - start_time).total_seconds()
+                            speed = time.time() - start_time
                             return True, speed
                 except asyncio.TimeoutError:
                     self.logger.warning(f"⌛ 代理验证超时: {proxy} | URL: {url}")
@@ -93,32 +95,34 @@ class ProxyManager:
         return False, 15.0
     
     async def update_proxy_pool(self):
-        self.logger.info("🔄 更新代理池...")
-        raw_proxies = await self.fetch_proxies()
-        valid_proxies = []
-        
-        # 并行验证代理 (限制为150个)
-        tasks = [self.validate_proxy(proxy) for proxy in raw_proxies[:150]]
-        results = await asyncio.gather(*tasks)
-        
-        for i, (is_valid, speed) in enumerate(results):
-            proxy = raw_proxies[i]
-            if is_valid:
-                # 跳过最近失败的代理
-                if proxy in self.failed_proxies:
-                    self.failed_proxies.discard(proxy)
-                    
-                valid_proxies.append(proxy)
-                # 根据速度评分 (1-10)
-                self.proxy_score[proxy] = max(1, min(10, int(10 - speed * 2)))
-                self.logger.info(f"✅ 代理可用: {proxy} | 速度: {speed:.2f}s | 评分: {self.proxy_score[proxy]}")
-            else:
-                # 标记失败代理
-                self.failed_proxies.add(proxy)
-        
-        self.proxy_pool = valid_proxies
-        self.last_refresh = datetime.now()
-        self.logger.info(f"代理池更新完成. 可用代理: {len(self.proxy_pool)}")
+        """线程安全地更新代理池"""
+        async with self.lock:
+            self.logger.info("🔄 更新代理池...")
+            raw_proxies = await self.fetch_proxies()
+            valid_proxies = []
+            
+            # 并行验证代理 (限制为150个)
+            tasks = [self.validate_proxy(proxy) for proxy in raw_proxies[:150]]
+            results = await asyncio.gather(*tasks)
+            
+            for i, (is_valid, speed) in enumerate(results):
+                proxy = raw_proxies[i]
+                if is_valid:
+                    # 跳过最近失败的代理
+                    if proxy in self.failed_proxies:
+                        self.failed_proxies.discard(proxy)
+                        
+                    valid_proxies.append(proxy)
+                    # 根据速度评分 (1-10)
+                    self.proxy_score[proxy] = max(1, min(10, int(10 - speed * 2)))
+                    self.logger.info(f"✅ 代理可用: {proxy} | 速度: {speed:.2f}s | 评分: {self.proxy_score[proxy]}")
+                else:
+                    # 标记失败代理
+                    self.failed_proxies.add(proxy)
+            
+            self.proxy_pool = valid_proxies
+            self.last_refresh = datetime.now()
+            self.logger.info(f"代理池更新完成. 可用代理: {len(self.proxy_pool)}")
     
     async def get_best_proxy(self):
         """获取最佳代理，自动刷新池，跳过失败代理"""
